@@ -500,28 +500,39 @@ class WeChatAdvisorCore:
             "download_url": f"/api/download_kb/{zip_filename}"
         }
 
-    def analyze_intent(self, text: str) -> Tuple[bool, str]:
-        """分析消息意图：过滤纯表情水聊，其余实质性发言均纳入军师思考"""
+    def analyze_intent(self, text: str, session_type: str = "group") -> Tuple[bool, str]:
+        """分析消息意图：私聊一律触发高情商建议；群聊过滤纯表情与水聊"""
         t = text.strip()
-        if not t or len(t) < 2:
+        if not t:
             return False, "无实质内容"
-        # 纯表情/系统通知过滤
+        # 纯系统通知过滤
+        if any(ignore in t for ignore in ["拍了拍", "加入了群聊", "移出了群聊", "撤回了一条消息"]):
+            return False, "系统通知"
+
+        # 1. 好友私聊（1对1）：只要发了文字消息，一律必须生成高情商回复建议！
+        if session_type == "private":
+            # 只过滤单字符纯标点
+            if len(t) == 1 and not ('\u4e00' <= t <= '\u9fa5' or t.isalnum()):
+                return False, "单标点符号"
+            return True, "好友私聊来信"
+
+        # 2. 群聊防灌水过滤
+        if len(t) < 2:
+            return False, "无实质内容"
         pure_emojis = re.sub(r"\[[a-zA-Z0-9\u4e00-\u9fa5]+\]", "", t).strip()
         if not pure_emojis and len(t) <= 12:
             return False, "纯表情互动"
-        if any(ignore in t for ignore in ["拍了拍", "加入了群聊", "移出了群聊", "撤回了一条消息"]):
-            return False, "系统通知"
         if t in ["收到", "好的", "好的收到", "ok", "OK", "666", "厉害", "牛逼", "哈哈", "哈哈哈", "确实", "赞"]:
             return False, "简短附和"
             
         # 判断意图标签
-        if any(w in t for w in ["?", "？", "怎么", "如何", "为啥", "为什么", "请问", "求助", "能否", "有没有", "卡在", "报错", "启动不了"]):
-            return True, "技术提问/求助"
+        if any(w in t for w in ["?", "？", "怎么", "如何", "为啥", "为什么", "请问", "求助", "能否", "有没有", "卡在", "报错", "启动不了", "在吗", "在干嘛", "干嘛呢"]):
+            return True, "提问/交流"
         if any(w in t for w in ["vllm", "cuda", "v100", "4090", "3090", "qwen", "deepseek", "显存", "吞吐", "量化", "fp8", "awq", "bc", "中间件"]):
             return True, "核心技术探讨"
         if any(w in t for w in ["价格", "降价", "算力", "成本", "便宜", "贵", "租用", "开销", "分钱", "1毛", "token"]):
             return True, "算力商业/成本讨论"
-        if len(t) >= 6:
+        if len(t) >= 4:
             return True, "群聊交流/观点发表"
         return False, "日常简短寒暄"
 
@@ -599,7 +610,15 @@ class WeChatAdvisorCore:
             except Exception as e:
                 print(f"[LLM调用异常, 进入知识库兜底]: {e}")
                 
-        # 知识库启发式兜底
+        # 知识库与情商启发式兜底
+        if session_type == "private":
+            q = question.lower()
+            if "干嘛" in q or "在吗" in q or "忙吗" in q:
+                return "在呢，刚忙完手头的事，怎么啦找我有事呀？"
+            if "吃了吗" in q or "吃饭" in q:
+                return "刚吃完呢，你吃过了没？"
+            return f"收到！可以直接回复：“好的，我了解了，我稍后仔细看下回复你哈。”"
+            
         if kb_info:
             return f"从之前群里的排坑经验来看：{kb_info[:150]}... 建议重点沿着这个方向排查一下环境与参数。"
         q = question.lower()
@@ -658,7 +677,7 @@ class WeChatAdvisorCore:
                     sender_nick = self.db.get_nickname(sender_id) or msg.get("sender_username") or "群友"
                     
                 now_str = datetime.datetime.now().strftime("%H:%M:%S")
-                is_valuable, intent_desc = self.analyze_intent(content)
+                is_valuable, intent_desc = self.analyze_intent(content, session_type=session_info["type"])
                 
                 advice = ""
                 if is_valuable:
