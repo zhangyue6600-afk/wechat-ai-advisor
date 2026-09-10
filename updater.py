@@ -8,6 +8,13 @@ import json
 import urllib.request
 import shutil
 
+# 确保在各种 Windows 控制台编码下不崩溃
+try:
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
 REPO_USER = "zhangyue6600-afk"
 REPO_NAME = "wechat-ai-advisor"
 BRANCH = "main"
