@@ -1,0 +1,90 @@
+/* WeChat-AI-Advisor UI Stylesheet */
+
+.step-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 0.875rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(51, 65, 85, 0.4);
+  background-color: rgba(15, 23, 42, 0.4);
+  color: #94a3b8;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.step-tab:hover {
+  background-color: rgba(30, 41, 59, 0.6);
+  border-color: rgba(99, 102, 241, 0.3);
+  color: #e2e8f0;
+}
+
+.step-tab.active {
+  background-color: rgba(99, 102, 241, 0.12);
+  border-color: rgba(99, 102, 241, 0.6);
+  color: #ffffff;
+  box-shadow: 0 4px 14px -2px rgba(99, 102, 241, 0.15);
+}
+
+.step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 9999px;
+  background-color: rgba(51, 65, 85, 0.6);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #cbd5e1;
+}
+
+.step-tab.active .step-num {
+  background-color: #6366f1;
+  color: #ffffff;
+}
+
+.export-range-btn {
+  padding: 0.625rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  background-color: rgba(15, 23, 42, 0.6);
+  color: #94a3b8;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-align: center;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.export-range-btn:hover {
+  background-color: rgba(30, 41, 59, 0.8);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: #f1f5f9;
+}
+
+.export-range-btn.active {
+  background-color: rgba(99, 102, 241, 0.15);
+  border-color: #6366f1;
+  color: #ffffff;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.3);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(71, 85, 105, 0.5);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.5);
+}

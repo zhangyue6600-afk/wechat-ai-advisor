@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>微信群 AI 军师 · WeChat-AI-Advisor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="/static/style.css?v=1.3.2">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased selection:bg-indigo-500 selection:text-white">
+
+  <!-- 顶部导航栏 -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 text-white font-bold text-xl">
+          🐱
+        </div>
+        <div>
+          <h1 class="text-lg font-bold bg-gradient-to-r from-white via-slate-200 to-indigo-300 bg-clip-text text-transparent">微信群 AI 军师</h1>
+          <p class="text-xs text-slate-400">群聊知识库提炼 · 实时问答监控 · 幕后专家智囊</p>
+        </div>
+      </div>
+      <div class="flex items-center space-x-4">
+        <div id="wechat-badge" class="flex items-center space-x-2 px-3 py-1 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span id="wechat-status-text">检测微信中...</span>
+        </div>
+        <button onclick="switchTab('step6')" class="text-xs text-slate-400 hover:text-indigo-400 transition flex items-center space-x-1">
+          <span>安全与说明</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主工作区 -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    
+    <!-- 步骤进度指示器 -->
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mb-8">
+      <button onclick="switchTab('step1')" id="tab-btn-step1" class="step-tab active">
+        <span class="step-num">1</span>
+        <span class="step-title">大模型配置</span>
+      </button>
+      <button onclick="switchTab('step2')" id="tab-btn-step2" class="step-tab">
+        <span class="step-num">2</span>
+        <span class="step-title">选择群聊</span>
+      </button>
+      <button onclick="switchTab('step3')" id="tab-btn-step3" class="step-tab">
+        <span class="step-num">3</span>
+        <span class="step-title">记录扫描</span>
+      </button>
+      <button onclick="switchTab('step4')" id="tab-btn-step4" class="step-tab">
+        <span class="step-num">4</span>
+        <span class="step-title">知识库提炼</span>
+      </button>
+      <button onclick="switchTab('step5')" id="tab-btn-step5" class="step-tab">
+        <span class="step-num">5</span>
+        <span class="step-title">实时军师</span>
+      </button>
+      <button onclick="switchTab('step6')" id="tab-btn-step6" class="step-tab">
+        <span class="step-num">6</span>
+        <span class="step-title">说明与注意</span>
+      </button>
+    </div>
+
+    <!-- 步骤面板容器 -->
+    <div class="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 sm:p-8 backdrop-blur-sm relative overflow-hidden shadow-2xl">
+
+      <!-- STEP 1: 大模型 API 配置 -->
+      <section id="pane-step1" class="tab-pane">
+        <div class="max-w-2xl">
+          <div class="flex items-center space-x-3 mb-4">
+            <span class="p-2 rounded-lg bg-indigo-500/10 text-indigo-400 font-bold">Step 1</span>
+            <h2 class="text-xl font-bold">配置大模型 API</h2>
+          </div>
+          <p class="text-slate-400 text-sm mb-6">
+            军师利用大模型为您生成内行、专业的回复建议。支持兼容 OpenAI 协议的任何模型（如 DeepSeek、OpenAI、Claude、OneAPI 或本地部署的 vLLM/Ollama）。
+          </p>
+
+          <form id="config-form" onsubmit="saveLlmConfig(event)" class="space-y-4">
+            <div>
+              <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">API Base URL (接口地址)</label>
+              <input type="text" id="cfg-url" placeholder="https://api.deepseek.com/v1" class="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-slate-200">
+              <span class="text-[11px] text-slate-500 mt-1 block">示例：https://api.deepseek.com/v1 或 https://api.openai.com/v1</span>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">API Key (密钥)</label>
+              <input type="password" id="cfg-key" placeholder="sk-..." class="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-slate-200">
+              <span id="cfg-masked-tip" class="text-[11px] text-emerald-400 mt-1 hidden"></span>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="block text-xs font-semibold uppercase text-slate-400">Model Name (模型名称)</label>
+                  <button type="button" onclick="autoFetchModels()" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition">🔍 自动获取模型</button>
+                </div>
+                <input type="text" id="cfg-model" placeholder="例如: qwen27b, deepseek-chat" class="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-slate-200">
+              </div>
+              <div>
+                <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Temperature (灵活性: 0.0 - 1.0)</label>
+                <input type="number" id="cfg-temp" step="0.1" min="0" max="1" value="0.7" class="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-slate-200">
+              </div>
+            </div>
+
+            <div class="pt-4 flex items-center space-x-3">
+              <button type="submit" id="btn-save-cfg" class="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition shadow-lg shadow-indigo-600/30 flex items-center space-x-2">
+                <span>保存并测试连通性</span>
+              </button>
+              <button type="button" onclick="switchTab('step2')" class="px-6 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-sm transition">
+                <span>下一步：选择群聊 →</span>
+              </button>
+            </div>
+            <div id="cfg-status-msg" class="text-xs pt-2"></div>
+          </form>
+        </div>
+      </section>
+
+      <!-- STEP 2: 微信检测与多会话选择 (群聊 + 私聊) -->
+      <section id="pane-step2" class="tab-pane hidden">
+        <div class="max-w-3xl">
+          <div class="flex items-center space-x-3 mb-4">
+            <span class="p-2 rounded-lg bg-indigo-500/10 text-indigo-400 font-bold">Step 2</span>
+            <h2 class="text-xl font-bold">选择监听目标（支持多群聊 + 好友私聊并发）</h2>
+          </div>
+          <p class="text-slate-400 text-sm mb-4">
+            支持同时添加多个微信群或私聊好友，军师在后台并发静默监听。当群友发问或好友发来私聊时，自动为您生成高情商/高水平回复！
+          </p>
+
+          <!-- 筛选类型切换与搜索 -->
+          <div class="flex flex-col sm:flex-row gap-2 mb-4">
+            <div class="flex rounded-xl bg-slate-950/80 p-1 border border-slate-800">
+              <button type="button" onclick="setSessionFilter('all', this)" class="session-filter-btn active px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 transition">🌟 全部</button>
+              <button type="button" onclick="setSessionFilter('group', this)" class="session-filter-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-white transition">👥 仅看群聊</button>
+              <button type="button" onclick="setSessionFilter('private', this)" class="session-filter-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-white transition">👤 仅看好友私聊</button>
+            </div>
+            <div class="relative flex-1">
+              <input type="text" id="room-search-input" placeholder="输入群名称、好友昵称或备注（如：vllm、李总、爸）" class="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-slate-200" oninput="debounceSearchRooms()">
+              <span class="absolute left-3.5 top-3 text-slate-500">🔍</span>
+            </div>
+          </div>
+
+          <!-- 已添加的会话标签池 -->
+          <div class="mb-4">
+            <div class="flex items-center justify-between text-xs text-slate-400 mb-2">
+              <span>🎯 已加入并发监听池 (<span id="monitored-count" class="text-indigo-400 font-bold">0</span> 个会话目标)：</span>
+              <button type="button" onclick="clearAllSelectedSessions()" class="text-rose-400 hover:underline text-[11px]">清空已选</button>
+            </div>
+            <div id="selected-sessions-pool" class="min-h-[48px] p-2.5 rounded-xl bg-slate-950/90 border border-slate-800 flex flex-wrap gap-2 items-center">
+              <span id="pool-empty-tip" class="text-xs text-slate-600">暂未选择目标，请在下方点击【+ 加入监听】</span>
+            </div>
+          </div>
+
+          <!-- 检索结果列表 -->
+          <div id="room-list-container" class="space-y-2 max-h-72 overflow-y-auto pr-1">
+            <div class="text-center py-8 text-slate-500 text-sm">正在加载通讯录...</div>
+          </div>
+
+          <!-- 底部操作栏 -->
+          <div class="mt-6 pt-4 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
+            <div class="text-xs text-slate-400">
+              💡 提示：如需提炼群知识库，请先点击某一个技术群的【扫描记录】进入 Step 3。
+            </div>
+            <div class="flex items-center space-x-3">
+              <button onclick="switchTab('step3')" class="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs transition">
+                前往知识库提炼 (Step 3) →
+              </button>
+              <button onclick="startMultiMonitorFromStep2()" class="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition shadow-lg shadow-indigo-600/30 flex items-center space-x-1">
+                <span>⚡ 开启多会话实时监控 (Step 5) →</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- STEP 3: 聊天记录扫描与提取 -->
+      <section id="pane-step3" class="tab-pane hidden">
+        <div class="max-w-2xl">
+          <div class="flex items-center space-x-3 mb-4">
+            <span class="p-2 rounded-lg bg-indigo-500/10 text-indigo-400 font-bold">Step 3</span>
+            <h2 class="text-xl font-bold">扫描群聊历史记录</h2>
+          </div>
+          <p class="text-slate-400 text-sm mb-6">
+            基于 Windows 底层只读文件映射，统计该群在本地的完整发言规模与时间分布：
+          </p>
+
+          <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-5 mb-6">
+            <div class="grid grid-cols-3 gap-4 text-center">
+              <div class="border-r border-slate-800/80 pr-2">
+                <span class="text-xs text-slate-500 block mb-1">历史消息总数</span>
+                <span id="scan-msg-count" class="text-2xl font-bold text-indigo-400">--</span>
+              </div>
+              <div class="border-r border-slate-800/80 pr-2">
+                <span class="text-xs text-slate-500 block mb-1">最早记录时间</span>
+                <span id="scan-start-time" class="text-sm font-semibold text-slate-200 block mt-1.5">--</span>
+              </div>
+              <div>
+                <span class="text-xs text-slate-500 block mb-1">最新记录时间</span>
+                <span id="scan-end-time" class="text-sm font-semibold text-slate-200 block mt-1.5">--</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="space-y-4">
+            <label class="block text-xs font-semibold uppercase text-slate-400">选择要提取的范围</label>
+            <div class="grid grid-cols-3 gap-3">
+              <button onclick="setExportDays(null, this)" class="export-range-btn active">全部历史记录</button>
+              <button onclick="setExportDays(30, this)" class="export-range-btn">最近 30 天</button>
+              <button onclick="setExportDays(7, this)" class="export-range-btn">最近 7 天</button>
+            </div>
+
+            <div class="pt-4 flex items-center space-x-3">
+              <button onclick="startExportKB()" id="btn-export-kb" class="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition shadow-lg shadow-indigo-600/30 flex items-center space-x-2">
+                <span>开始提炼 AI 知识库与导出</span>
+              </button>
+              <span id="export-spin" class="text-xs text-slate-400 hidden animate-pulse">正在离线解密与构建，请稍候...</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- STEP 4: AI 知识库提炼与下载 -->
+      <section id="pane-step4" class="tab-pane hidden">
+        <div class="max-w-3xl">
+          <div class="flex items-center space-x-3 mb-4">
+            <span class="p-2 rounded-lg bg-indigo-500/10 text-indigo-400 font-bold">Step 4</span>
+            <h2 class="text-xl font-bold">知识库生成与交付</h2>
+          </div>
+          <p class="text-slate-400 text-sm mb-6">
+            已成功为您完成群聊去噪、引用回复深度还原与知识库架构切片：
+          </p>
+
+          <div id="kb-success-card" class="p-6 rounded-xl bg-emerald-950/20 border border-emerald-500/30 mb-6">
+            <div class="flex items-center space-x-3 text-emerald-400 font-bold text-base mb-2">
+              <span>🎉 知识库提炼完成！</span>
+            </div>
+            <p class="text-slate-300 text-sm mb-4" id="kb-summary-text">
+              已将该群技术交流数据清洗并封装为标准的双层通用知识库。
+            </p>
+            <div class="flex items-center space-x-4">
+              <a id="btn-download-zip" href="#" download class="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm transition shadow-lg shadow-emerald-600/30 flex items-center space-x-2">
+                <span>📦 下载知识库 (.ZIP 压缩包)</span>
+              </a>
+              <button onclick="switchTab('step5')" class="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition shadow-lg shadow-indigo-600/30">
+                <span>前往开启实时监控 (Step 5) →</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="bg-slate-950/60 rounded-xl p-5 border border-slate-800 text-xs text-slate-400 space-y-2 font-mono">
+            <div class="text-slate-200 font-semibold mb-1">📁 知识库内部构造（可分享给任何朋友使用）：</div>
+            <div>├── Agent_Prompt.md          (核心系统引导词，赋予任何 Agent 相同判断力)</div>
+            <div>├── 00_技术专题与避坑指南/     (结构化最佳实践与常见报错 FAQ)</div>
+            <div>├── 01_原始群聊对话归档/       (按时间排列的纯净 Markdown 对话流)</div>
+            <div>└── 02_结构化数据_JSONL/       (供向量数据库或 RAG 切片的标准数据集)</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- STEP 5: 实时群军师监控 -->
+      <section id="pane-step5" class="tab-pane hidden">
+        <div>
+          <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center space-x-3">
+              <span class="p-2 rounded-lg bg-indigo-500/10 text-indigo-400 font-bold">Step 5</span>
+              <div>
+                <h2 class="text-xl font-bold">群军师实时监控看板</h2>
+                <p class="text-xs text-slate-400">正在监听：<span id="monitor-target-name" class="text-indigo-400 font-semibold">未选择群聊</span></p>
+              </div>
+            </div>
+            <div class="flex items-center space-x-3">
+              <button id="btn-toggle-monitor" onclick="toggleMonitor()" class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition shadow-lg shadow-emerald-600/30 flex items-center space-x-2">
+                <span id="monitor-btn-icon">▶</span>
+                <span id="monitor-btn-text">启动 0.8s 极速监控</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 监控选项开关 -->
+          <div class="flex items-center space-x-6 py-2 px-4 rounded-xl bg-slate-950/60 border border-slate-800 text-xs text-slate-400 mb-6">
+            <label class="flex items-center space-x-2 cursor-pointer">
+              <input type="checkbox" id="chk-clipboard" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+              <span>自动将推荐回复写入剪贴板（微信直接 Ctrl+V）</span>
+            </label>
+            <label class="flex items-center space-x-2 cursor-pointer">
+              <input type="checkbox" id="chk-chime" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+              <span>提问捕获时播放提示音 (叮~)</span>
+            </label>
+          </div>
+
+          <!-- 实时消息瀑布流看板 -->
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- 左栏：最新群消息流 -->
+            <div class="bg-slate-950/70 border border-slate-800/90 rounded-xl p-4 flex flex-col h-[480px]">
+              <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-3 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                <span>群内最新实时发言</span>
+                <span class="flex items-center space-x-1 text-emerald-400">
+                  <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                  <span>0.8s 轮询中</span>
+                </span>
+              </div>
+              <div id="live-chat-stream" class="flex-1 overflow-y-auto space-y-2.5 pr-2 font-sans text-xs">
+                <div class="text-center py-20 text-slate-600">启动监控后，群内新发言将实时在此滚动...</div>
+              </div>
+            </div>
+
+            <!-- 右栏：军师捕捉到的高价值提问与生成建议 -->
+            <div class="bg-slate-950/70 border border-slate-800/90 rounded-xl p-4 flex flex-col h-[480px]">
+              <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-3 text-xs font-bold text-indigo-400 uppercase tracking-wider">
+                <span>🎯 专家建议生成卡片</span>
+                <span class="text-slate-500">点击卡片可重新复制回复</span>
+              </div>
+              <div id="advice-cards-container" class="flex-1 overflow-y-auto space-y-3 pr-2">
+                <div class="text-center py-20 text-slate-600 text-xs">群里出现技术求助时，军师将立即在此生成内行解答...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- STEP 6: 注意事项与说明 -->
+      <section id="pane-step6" class="tab-pane hidden">
+        <div class="max-w-3xl space-y-6 text-sm">
+          <div>
+            <h2 class="text-xl font-bold mb-2">安全机制与使用说明</h2>
+            <p class="text-slate-400">微信群 AI 军师的设计初衷是安全、高保真地挖掘交流价值并在群内高效立住专业技术形象。</p>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="p-4 rounded-xl bg-slate-950/80 border border-slate-800">
+              <h3 class="text-indigo-400 font-bold mb-1 flex items-center space-x-1.5">
+                <span>🛡️</span>
+                <span>绝对零封号保证</span>
+              </h3>
+              <p class="text-xs text-slate-400 leading-relaxed">
+                底层采用 Windows 原生 <code class="text-slate-300">PROCESS_VM_READ</code> 纯只读内存扫描，不修改微信内存、不注入任何外部 DLL，不接触网络传输协议，微信反作弊模块判定为合法系统读操作。
+              </p>
+            </div>
+
+            <div class="p-4 rounded-xl bg-slate-950/80 border border-slate-800">
+              <h3 class="text-indigo-400 font-bold mb-1 flex items-center space-x-1.5">
+                <span>🖥️</span>
+                <span>本地局域网私有模型支持</span>
+              </h3>
+              <p class="text-xs text-slate-400 leading-relaxed">
+                已深度适配局域网或本地模型（如 <code class="text-slate-300">Qwen27B</code>、vLLM、Ollama）。如连接内网服务器（如 192.168.x.x），系统会自动绕过代理；请优先使用原生推理端口（如 <code class="text-slate-300">:8000/v1</code>），API Key 可直接留空或填 <code class="text-slate-300">EMPTY</code>。
+              </p>
+            </div>
+
+            <div class="p-4 rounded-xl bg-slate-950/80 border border-slate-800">
+              <h3 class="text-indigo-400 font-bold mb-1 flex items-center space-x-1.5">
+                <span>🧠</span>
+                <span>知识库 + 联网动态搜索</span>
+              </h3>
+              <p class="text-xs text-slate-400 leading-relaxed">
+                军师对群内每句发言均进行意图评估。回复时优先检索群内过往讨论（群内共识权重最高），若遇到外部新概念或知识盲区，自动联网搜索补齐，并严格学习技术群友自然口吻。不满意可随时点击 <code class="text-slate-300">[重新生成]</code> 换一换！
+              </p>
+            </div>
+
+            <div class="p-4 rounded-xl bg-slate-950/80 border border-slate-800">
+              <h3 class="text-indigo-400 font-bold mb-1 flex items-center space-x-1.5">
+                <span>⚡</span>
+                <span>为什么坚持“人工确认发送”</span>
+              </h3>
+              <p class="text-xs text-slate-400 leading-relaxed">
+                自动化发包很容易被腾讯封控，且 AI 自动回复有说错话翻车的风险。本工具采用“后台军师秒出方案 + 自动存剪贴板 + 您人工审阅按 Ctrl+V 发送”，既绝对安全，又万无一失。
+              </p>
+            </div>
+
+            <div class="p-4 rounded-xl bg-slate-950/80 border border-slate-800">
+              <h3 class="text-indigo-400 font-bold mb-1 flex items-center space-x-1.5">
+                <span>📦</span>
+                <span>打包分享给朋友</span>
+              </h3>
+              <p class="text-xs text-slate-400 leading-relaxed">
+                在第 4 步下载生成的 ZIP 包，里面自带 <code class="text-slate-300">Agent_Prompt.md</code>。朋友无论使用 Claude Projects、GPTs、Cursor 还是任意 Agent，把解压文件夹作为知识库丢进去即可拥有同等推理能力！
+              </p>
+            </div>
+
+            <div class="p-4 rounded-xl bg-slate-950/80 border border-slate-800">
+              <h3 class="text-indigo-400 font-bold mb-1 flex items-center space-x-1.5">
+                <span>🔄</span>
+                <span>一键卸载与自动检查更新</span>
+              </h3>
+              <p class="text-xs text-slate-400 leading-relaxed">
+                软件根目录下贴心内置了 <code class="text-slate-300">检查并自动更新.bat</code>（支持 1 秒轻量热更新补丁）以及 <code class="text-slate-300">卸载微信群AI军师.bat</code>（一键关闭后台残留、清理临时缓存并移除快捷方式）。
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <script src="/static/app.js?v=1.3.3"></script>
+</body>
+</html>
