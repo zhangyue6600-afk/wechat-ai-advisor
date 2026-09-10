@@ -171,14 +171,11 @@ async function searchRooms() {
       const addBtnText = isSelected ? "已在监听池" : "+ 加入监听";
       const addBtnClass = isSelected ? "bg-slate-800 text-slate-500 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-500 text-white";
       
-      let extraActions = "";
-      if (isGroup) {
-        extraActions = `
-          <button onclick="selectRoomForKB('${r.id}', '${escapeHtml(r.display_name)}')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs transition border border-slate-700">
-            📚 提炼知识库
-          </button>
-        `;
-      }
+      const extraActions = `
+        <button onclick="selectRoomForKB('${r.id}', '${escapeHtml(r.display_name)}')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs transition border border-slate-700 flex items-center space-x-1">
+          <span>📚 提炼知识库</span>
+        </button>
+      `;
       
       item.innerHTML = `
         <div class="flex items-center space-x-3 flex-1 min-w-0 pr-3">

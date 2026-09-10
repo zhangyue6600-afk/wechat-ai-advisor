@@ -384,12 +384,19 @@ class WeChatAdvisorCore:
                     FROM {target} WHERE create_time >= ? ORDER BY sort_seq ASC
                 """
                 cur.execute(query, (min_ctime,))
+                is_private = not room_id.endswith("@chatroom")
                 for r in cur.fetchall():
                     lid, ltype, sid, ctime, mcontent = r
                     body = parse_real_content(mcontent)
                     if not body or "拍了拍" in body:
                         continue
-                    sender_nick = self.db.get_nickname(sid) or str(sid)
+                    if is_private:
+                        if sid == 2 or sid == 0 or sid == 15:
+                            sender_nick = "我"
+                        else:
+                            sender_nick = room_name
+                    else:
+                        sender_nick = self.db.get_nickname(sid) or str(sid)
                     all_records.append({
                         "id": lid,
                         "time": ctime,
@@ -434,7 +441,19 @@ class WeChatAdvisorCore:
         # 3. 自动生成 Agent_Prompt.md
         prompt_file = os.path.join(kb_path, "Agent_Prompt.md")
         with open(prompt_file, "w", encoding="utf-8") as f:
-            f.write(f"""# {room_name} 专属群军师系统引导词
+            if not room_id.endswith("@chatroom"):
+                f.write(f"""# 与「{room_name}」专属私聊往来记忆与高情商智囊系统引导词
+
+你是由我与「{room_name}」的全部历史私聊记录（共 {len(all_records)} 条往来对话）训练赋能的私人专属军师与高情商智囊。
+
+## 核心职责与原则
+1. **深度掌握往来背景**：熟悉我与「{room_name}」曾沟通的事项、关键话题、约定与合作进展；
+2. **洞悉对方决策习惯**：理解「{room_name}」的沟通偏好、性格特点与核心关切，避免触碰沟通雷区；
+3. **高情商与得体回复**：给出回复建议时，语言真诚、自然、拿捏分寸、切中要害，绝不使用死板的客服腔与机械八股文；
+4. **备忘与未决事项追踪**：适时提醒对话中曾提及的待办事项与未决议题。
+""")
+            else:
+                f.write(f"""# {room_name} 专属群军师系统引导词
 
 你是由「{room_name}」历史沉淀交流经验（共 {len(all_records)} 条实测讨论）训练赋能的资深技术顾问。
 
@@ -442,6 +461,8 @@ class WeChatAdvisorCore:
 1. **真实一手经验**：优先基于知识库中群友的复现测试与真实报错给出解答；
 2. **时效性判定**：如果前后时间存在方案冲突，以更新月份的群友实测与官方 patch 结论为准；
 3. **言简意赅**：在微信群中发言风格要利落、专业、直击痛点，指出常见踩坑点；
+4. **客观呈现争议**：对尚无定论的问题，客观列出两派观点，不盲目下结论。
+""")
 4. **格式规范**：直接输出回复内容，不要带多余客套寒暄。
 """)
 
