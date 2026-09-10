@@ -555,31 +555,31 @@ class WeChatAdvisorCore:
             
         if session_type == "private":
             system_prompt = (
-                f"你是微信私聊中针对好友「{session_name or sender}」的专属沟通军师与高情商智囊。\n"
-                "对方刚刚发来了一条消息。请你给用户提供一段【高情商、真诚、得体、直切要害】的微信回复草稿。\n"
-                "【准则】：\n"
-                "1. 严禁客服腔，不要写“您好”、“祝您生活愉快”等废话；\n"
-                "2. 像真实好友微信交流一样自然、口语化、接地气；\n"
-                "3. 根据语境，既要体贴到位，又要有主见与建设性；输出1-3句话直接可发。"
+                f"你是微信私聊中针对好友「{session_name or sender}」的专属高情商智囊。\n"
+                "对方刚刚发来了一条消息。请给用户提供一段【高情商、真诚、得体、自然接地气】的微信回复草稿。\n"
+                "【强制语言准则】：\n"
+                "1. 全程必须使用纯正自然的简体中文，严禁使用任何英文！\n"
+                "2. 严禁客服腔，不写“您好”、“祝您生活愉快”等废话；\n"
+                "3. 直接输出1到2句微信聊天内容，不加引号、不写分析理由、不要分点列出多种选项，让用户能直接复制发送！"
             )
+            user_prompt = f"微信好友「{session_name or sender}」私聊对我说：\n“{question}”\n请直接输出1到2句自然真诚的中文回复草稿："
         else:
             system_prompt = (
                 f"你是微信群「{session_name or '技术交流群'}」的常驻技术军师与资深大模型推理架构师。\n"
                 "当监测到群友发言或讨论时，你的任务是给用户提供一段【极具内行感、客观专业、切中要害】的回复建议，帮用户树立技术大牛人设。\n"
-                "【知识权重准则】：\n"
-                "1. 优先结合【群内真实沉淀知识与实测经验】（权重最高，群内共识最受认可）；\n"
-                "2. 若涉及群外新事件、新产品或知识盲区，结合【联网搜索资料】进行专业补充；\n"
-                "3. 语言风格：必须符合技术群真实老玩家/架构师口吻（言简意赅、自然、直奔底层要害、带具体排查点或参数）；\n"
-                "4. 严禁客服腔和机械八股文，不要说“您好，关于这个问题”，直接像群友插话一样输出 100-200 字以内的精炼观点。"
+                "【强制语言与知识准则】：\n"
+                "1. 全程必须使用纯正地道的简体中文，严禁输出任何英文思维链或分析！\n"
+                "2. 优先结合【群内真实沉淀知识与实测经验】（权重最高，群内共识最受认可）；\n"
+                "3. 若涉及群外新事件、新产品或知识盲区，结合【联网搜索资料】进行专业补充；\n"
+                "4. 语言风格：必须符合技术群真实老玩家/架构师口吻（言简意赅、自然、直奔底层要害、带具体排查点或参数）；\n"
+                "5. 严禁客服腔和机械八股文，直接输出100-200字以内的精炼回复，方便直接发群。"
             )
-        
-        user_prompt = f"群内发言人【{sender}】说：\n“{question}”\n"
-        if kb_info:
-            user_prompt += f"\n【群内过往沉淀实测经验（最高权重依据）】：\n{kb_info}\n"
-        if web_info:
-            user_prompt += f"\n【联网最新搜索补充参考】：\n{web_info}\n"
-            
-        user_prompt += "\n请给出你的高逼格专业回复建议（直接输出建议内容）："
+            user_prompt = f"群内发言人【{sender}】说：\n“{question}”\n"
+            if kb_info:
+                user_prompt += f"\n【群内过往沉淀实测经验（最高权重依据）】：\n{kb_info}\n"
+            if web_info:
+                user_prompt += f"\n【联网最新搜索补充参考】：\n{web_info}\n"
+            user_prompt += "\n请直接给出你的高逼格专业中文回复建议："
         
         clean_key = api_key if api_key else "EMPTY"
         proxies = {"http": None, "https": None} if is_private_ip(api_url) else None
@@ -598,21 +598,44 @@ class WeChatAdvisorCore:
                         {"role": "user", "content": user_prompt}
                     ],
                     "temperature": temp,
-                    "max_tokens": 350
+                    "max_tokens": 600
                 }
                 resp = requests.post(url, headers=headers, json=payload, timeout=25, proxies=proxies)
                 if resp.status_code == 200:
                     data = resp.json()
                     msg = data["choices"][0]["message"]
-                    ans = msg.get("content") or msg.get("reasoning") or msg.get("reasoning_content") or ""
+                    content = (msg.get("content") or "").strip()
+                    reasoning = (msg.get("reasoning") or msg.get("reasoning_content") or "").strip()
+                    
+                    ans = ""
+                    # 优先提取 content
+                    if content:
+                        ans = content
+                    elif reasoning:
+                        # 如果 content 为空只有 reasoning，且为中文，尝试提取中文文本，绝不能返回英文思维链！
+                        import re
+                        ch_chars = re.findall(r"[一-龥]", reasoning)
+                        if len(ch_chars) >= 15:
+                            quotes = re.findall(r'["\u201c\u201d\u300c\u300d]([^"\u201c\u201d\u300c\u300d]+)["\u201c\u201d\u300c\u300d]', reasoning)
+                            val_quotes = [q for q in quotes if len(re.findall(r"[\u4e00-\u9fa5]", q)) >= 6]
+                            if val_quotes:
+                                ans = val_quotes[-1]
+                            else:
+                                ans = reasoning
+                                
                     if ans:
-                        return ans.strip().strip("“”\"'")
+                        clean_ans = ans.strip().strip("“”\"'")
+                        # 过滤纯英文漏网之鱼
+                        if len(re.findall(r"[一-龥]", clean_ans)) >= 2:
+                            return clean_ans
             except Exception as e:
                 print(f"[LLM调用异常, 进入知识库兜底]: {e}")
                 
         # 知识库与情商启发式兜底
         if session_type == "private":
             q = question.lower()
+            if "生日" in q:
+                return f"生日快乐呀{session_name or sender}！🎂 今天你最大，想要什么安排，必须狠狠开心庆祝一下！"
             if "干嘛" in q or "在吗" in q or "忙吗" in q:
                 return "在呢，刚忙完手头的事，怎么啦找我有事呀？"
             if "吃了吗" in q or "吃饭" in q:
