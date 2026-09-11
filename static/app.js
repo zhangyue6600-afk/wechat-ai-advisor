@@ -8,14 +8,35 @@ let isMonitoring = false;
 let eventSource = null;
 let searchTimer = null;
 
+let currentActiveKbFolder = "";
+
 document.addEventListener("DOMContentLoaded", () => {
   loadConfig();
   checkWeChatStatus();
   searchRooms();
   checkMonitorStatus();
+  loadKnowledgeBaseList();
+
+  // 记忆用户当前停留在哪一步，刷新或重启自动恢复
+  const savedStep = localStorage.getItem("advisor_active_step") || "step1";
+  switchTab(savedStep);
+
+  // 绑定主动问答键盘快捷键 (Enter 发送)
+  const kbInput = document.getElementById("kb-chat-input");
+  if (kbInput) {
+    kbInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendKbQuestion();
+      }
+    });
+  }
 });
 
 function switchTab(stepId) {
+  currentTab = stepId;
+  localStorage.setItem("advisor_active_step", stepId);
+
   document.querySelectorAll(".tab-pane").forEach(el => el.classList.add("hidden"));
   document.querySelectorAll(".step-tab").forEach(el => el.classList.remove("active"));
   
@@ -24,10 +45,11 @@ function switchTab(stepId) {
   if (targetPane) targetPane.classList.remove("hidden");
   if (targetBtn) targetBtn.classList.add("active");
 
-  // 进入 Step 5 时，主动同步一次多会话 Tabs
+  // 进入 Step 5 时，主动同步多会话 Tabs 与知识库列表
   if (stepId === "step5") {
     renderSessionTabs();
     filterPanelsBySession(currentActiveSessionId);
+    loadKnowledgeBaseList();
   }
 }
 
@@ -960,4 +982,216 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+// ==========================================
+// 知识库管理、主动专家问答与增量同步功能
+// ==========================================
+
+async function loadKnowledgeBaseList() {
+  const select = document.getElementById("select-active-kb");
+  if (!select) return;
+
+  try {
+    const res = await fetch("/api/kb/list");
+    const data = await res.json();
+    if (data.status === "success" && data.kbs) {
+      if (data.kbs.length === 0) {
+        select.innerHTML = `<option value="">暂无知识库 (请先在 Step 3 提炼)</option>`;
+        updateKbChatHeader("未选择知识库");
+        return;
+      }
+      
+      let html = "";
+      data.kbs.forEach((kb, idx) => {
+        const isSelected = (currentActiveKbFolder === kb.folder_name) || (!currentActiveKbFolder && idx === 0);
+        if (isSelected) currentActiveKbFolder = kb.folder_name;
+        const countInfo = kb.total_messages ? `(${kb.total_messages}条记录)` : "";
+        html += `<option value="${escapeHtml(kb.folder_name)}" ${isSelected ? "selected" : ""}>${escapeHtml(kb.title)} ${countInfo}</option>`;
+      });
+      select.innerHTML = html;
+      
+      const selectedOption = select.options[select.selectedIndex];
+      if (selectedOption) {
+        updateKbChatHeader(selectedOption.text);
+      }
+    }
+  } catch (err) {
+    console.warn("加载知识库列表失败:", err);
+  }
+}
+
+function handleActiveKbChange(folderName) {
+  currentActiveKbFolder = folderName;
+  const select = document.getElementById("select-active-kb");
+  if (select && select.selectedIndex >= 0) {
+    updateKbChatHeader(select.options[select.selectedIndex].text);
+  }
+}
+
+function updateKbChatHeader(title) {
+  const el = document.getElementById("kb-chat-current-title");
+  if (el) el.innerText = title;
+}
+
+// 增量同步
+async function triggerIncrementalSync() {
+  if (!currentActiveKbFolder) {
+    alert("请先选择一个要同步的知识库！");
+    return;
+  }
+  const btn = document.getElementById("btn-inc-sync");
+  const origHtml = btn ? btn.innerHTML : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span>🔄 检查新消息...</span>`;
+  }
+
+  try {
+    const res = await fetch("/api/kb/incremental_update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kb_folder: currentActiveKbFolder })
+    });
+    const data = await res.json();
+    if (res.ok && data.status === "success") {
+      alert(`🎉 增量同步完成！\n成功提取并追加了 ${data.new_count} 条最新群聊对话！\n知识库与压缩包已实时同步更新。`);
+      loadKnowledgeBaseList();
+    } else if (res.ok && data.status === "up_to_date") {
+      alert("✅ 该知识库已经是最新状态！\n自上次同步后群内暂无新的技术聊天记录。");
+    } else {
+      alert("增量同步提示: " + (data.message || data.error || "未知响应"));
+    }
+  } catch (err) {
+    alert("增量同步请求失败: " + err.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
+  }
+}
+
+// 专家主动问答侧边抽屉
+function toggleKbChatDrawer() {
+  const drawer = document.getElementById("kb-chat-drawer");
+  if (!drawer) return;
+  const isHidden = drawer.classList.contains("hidden");
+  if (isHidden) {
+    drawer.classList.remove("hidden");
+    const input = document.getElementById("kb-chat-input");
+    if (input) setTimeout(() => input.focus(), 150);
+  } else {
+    drawer.classList.add("hidden");
+  }
+}
+
+async function sendKbQuestion() {
+  const input = document.getElementById("kb-chat-input");
+  const btn = document.getElementById("btn-send-kb-chat");
+  const messagesContainer = document.getElementById("kb-chat-messages");
+  if (!input || !messagesContainer) return;
+
+  const question = input.value.trim();
+  if (!question) return;
+
+  // 清空输入框
+  input.value = "";
+
+  // 1. 渲染用户消息气泡
+  const userBubble = document.createElement("div");
+  userBubble.className = "flex justify-end";
+  userBubble.innerHTML = `
+    <div class="max-w-[85%] p-3 rounded-2xl bg-indigo-600 text-white shadow-md leading-relaxed">
+      ${escapeHtml(question).replace(/\n/g, "<br>")}
+    </div>
+  `;
+  messagesContainer.appendChild(userBubble);
+
+  // 2. 渲染正在思考的 AI 骨架卡片
+  const aiBubble = document.createElement("div");
+  aiBubble.className = "flex justify-start";
+  aiBubble.innerHTML = `
+    <div class="max-w-[90%] p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700/80 text-slate-200 shadow-md space-y-2">
+      <div class="flex items-center space-x-2 text-indigo-400 font-semibold text-[11px]">
+        <span class="animate-spin text-sm">⏳</span>
+        <span>正在检索本地知识库并生成深度解答...</span>
+      </div>
+      <div class="h-2 bg-slate-700 rounded animate-pulse w-3/4"></div>
+      <div class="h-2 bg-slate-700 rounded animate-pulse w-1/2"></div>
+    </div>
+  `;
+  messagesContainer.appendChild(aiBubble);
+  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await fetch("/api/kb/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: question,
+        kb_folder: currentActiveKbFolder
+      })
+    });
+    const data = await res.json();
+    if (res.ok && data.answer) {
+      const formattedAnswer = formatAdviceMarkdown(data.answer);
+      aiBubble.innerHTML = `
+        <div class="max-w-[92%] p-3.5 rounded-2xl bg-slate-800/95 border border-slate-700 text-slate-200 shadow-lg space-y-2.5">
+          <div class="flex items-center justify-between border-b border-slate-700/70 pb-2">
+            <span class="text-[11px] font-bold text-indigo-400 flex items-center space-x-1">
+              <span>🎯</span>
+              <span>知识库专家解答</span>
+            </span>
+            <button onclick="copyRawText(this, \`${escapeHtml(data.answer).replace(/`/g, "\\`")}\`)" class="text-[11px] px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-700 text-slate-300 transition">
+              📋 复制
+            </button>
+          </div>
+          <div class="leading-relaxed text-xs text-slate-200">
+            ${formattedAnswer}
+          </div>
+        </div>
+      `;
+    } else {
+      aiBubble.innerHTML = `
+        <div class="max-w-[90%] p-3.5 rounded-2xl bg-rose-950/40 border border-rose-800/60 text-rose-300">
+          ⚠️ 解答失败：${escapeHtml(data.error || "大模型未响应")}
+        </div>
+      `;
+    }
+  } catch (err) {
+    aiBubble.innerHTML = `
+      <div class="max-w-[90%] p-3.5 rounded-2xl bg-rose-950/40 border border-rose-800/60 text-rose-300">
+        ⚠️ 网络请求错误：${escapeHtml(err.message)}
+      </div>
+    `;
+  } finally {
+    if (btn) btn.disabled = false;
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  }
+}
+
+function clearKbChatHistory() {
+  const container = document.getElementById("kb-chat-messages");
+  if (!container) return;
+  container.innerHTML = `
+    <div class="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700/60 text-slate-300 leading-relaxed">
+      👋 对话历史已清空。您可以随时在此输入新的技术疑问！
+    </div>
+  `;
+}
+
+function copyRawText(btn, text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(() => fallbackCopyText(text));
+  } else {
+    fallbackCopyText(text);
+  }
+  if (btn) {
+    const orig = btn.innerText;
+    btn.innerText = "✓ 已复制";
+    setTimeout(() => { btn.innerText = orig; }, 1800);
+  }
 }

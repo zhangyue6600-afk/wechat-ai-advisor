@@ -521,6 +521,20 @@ class WeChatAdvisorCore:
 - `02_结构化数据_JSONL/`: 供向量数据库与 RAG 引擎一键切片的标准 JSON 数据集
 """)
 
+        # 4.5 保存知识库元数据 (用于增量同步与快速加载)
+        meta_info = {
+            "type": "single",
+            "room_id": room_id,
+            "room_name": room_name,
+            "clean_name": clean_name,
+            "created_at": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "last_msg_time": max([r.get("create_time", 0) for r in all_records]) if all_records else int(time.time()),
+            "total_messages": len(all_records),
+            "kb_title": room_name
+        }
+        with open(os.path.join(kb_path, ".kb_meta.json"), "w", encoding="utf-8") as f:
+            json.dump(meta_info, f, ensure_ascii=False, indent=2)
+
         # 5. 打包为 zip
         zip_filename = f"{clean_name}_AI知识库.zip"
         zip_filepath = os.path.join(self.data_dir, zip_filename)
@@ -737,6 +751,21 @@ class WeChatAdvisorCore:
 2. 保持技术群老兵的沉稳、极客、直奔要害风格；
 3. 输出纯正中文，杜绝机械套话。
 """)
+
+        # 4.5 保存合并知识库元数据
+        meta_info = {
+            "type": "merge",
+            "sessions": sessions,
+            "source_names": source_names,
+            "clean_title": clean_title,
+            "created_at": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "last_msg_time": max([r.get("create_time", 0) for r in all_records]) if all_records else int(time.time()),
+            "total_messages": len(all_records),
+            "distilled_count": len(distilled_qa_list),
+            "kb_title": clean_title
+        }
+        with open(os.path.join(kb_path, ".kb_meta.json"), "w", encoding="utf-8") as f:
+            json.dump(meta_info, f, ensure_ascii=False, indent=2)
 
         # 5. 打包 Zip
         zip_filename = f"{clean_title}_AI综合知识库.zip"
@@ -1037,4 +1066,171 @@ class WeChatAdvisorCore:
             "is_monitoring": is_running,
             "sessions": list(getattr(self, "monitored_sessions", {}).values()),
             "sessions_count": len(getattr(self, "monitored_sessions", {}))
+        }
+
+    def list_all_knowledge_bases(self) -> list:
+        """扫描本地所有已构建的知识库列表"""
+        kbs = []
+        if not os.path.exists(self.data_dir):
+            return kbs
+            
+        for item in os.listdir(self.data_dir):
+            full_path = os.path.join(self.data_dir, item)
+            if not os.path.isdir(full_path) or not item.endswith("_AI知识库"):
+                continue
+                
+            meta_path = os.path.join(full_path, ".kb_meta.json")
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    meta["folder_name"] = item
+                    kbs.append(meta)
+                    continue
+                except Exception:
+                    pass
+                    
+            # 兼容老版没有 meta 文件的知识库
+            title = item.replace("_AI知识库", "")
+            kbs.append({
+                "type": "single",
+                "folder_name": item,
+                "kb_title": title,
+                "created_at": datetime.datetime.fromtimestamp(os.path.getmtime(full_path)).strftime('%Y-%m-%d %H:%M:%S'),
+                "total_messages": 0
+            })
+            
+        # 按最新创建/更新时间倒序排序
+        kbs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        return kbs
+
+    def chat_with_kb(self, query: str, kb_folder_name: str = "") -> dict:
+        """专家主动问答：用户主动向指定技术知识库提问"""
+        q = query.strip()
+        if not q:
+            return {"answer": "请输入您想了解的问题内容。"}
+            
+        kb_dir = os.path.join(self.data_dir, kb_folder_name) if kb_folder_name else ""
+        if not kb_dir or not os.path.exists(kb_dir):
+            # 自动寻找第一个可用知识库
+            all_kbs = self.list_all_knowledge_bases()
+            if all_kbs:
+                kb_dir = os.path.join(self.data_dir, all_kbs[0]["folder_name"])
+            else:
+                kb_dir = ""
+                
+        kb_info = search_local_kb(q, kb_dir, max_chars=1200) if kb_dir else ""
+        
+        system_prompt = (
+            "你是基于微信群聊与私聊真实技术交流构建的 AI 军师架构师。\n"
+            "你的任务是直接、专业、针对性地回答用户提出的技术或业务问题。\n"
+            "准则：\n"
+            "1. 严格参考【本地知识库参考内容】中记录的实测参数、踩坑经验、解决方案和代码；\n"
+            "2. 保持技术老兵的直接、硬核、条理清晰风格，列出分步操作或排查方案；\n"
+            "3. 如果知识库中没有明确答案，请运用你的专业知识推导，并诚实说明为专业推测；\n"
+            "4. 输出纯中文，杜绝废话和客套开场白。"
+        )
+        
+        user_prompt = f"【本地知识库参考内容】:\n{kb_info if kb_info else '（当前暂未检索到直接相关的群聊原记录）'}\n\n【用户问题】:\n{q}\n\n请给出专业深入的解答："
+        
+        answer = self.call_llm_advice(user_prompt, system_prompt)
+        return {
+            "query": q,
+            "answer": answer,
+            "has_kb_reference": bool(kb_info),
+            "kb_folder": os.path.basename(kb_dir) if kb_dir else ""
+        }
+
+    def incremental_sync_kb(self, kb_folder_name: str) -> dict:
+        """知识库一键增量更新：仅拉取上次构建之后的新增记录"""
+        kb_path = os.path.join(self.data_dir, kb_folder_name)
+        if not os.path.exists(kb_path):
+            return {"status": "error", "message": f"知识库目录不存在: {kb_folder_name}"}
+            
+        meta_path = os.path.join(kb_path, ".kb_meta.json")
+        if not os.path.exists(meta_path):
+            return {"status": "error", "message": "该知识库缺少元数据信息，请先进行一次完整提炼导出"}
+            
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+            
+        last_msg_time = meta.get("last_msg_time", 0)
+        kb_type = meta.get("type", "single")
+        
+        new_records = []
+        if kb_type == "single":
+            room_id = meta.get("room_id")
+            if not room_id:
+                return {"status": "error", "message": "缺少 room_id 元数据"}
+            all_records = self.scan_room_messages(room_id, days=None)
+            new_records = [r for r in all_records if r.get("create_time", 0) > last_msg_time]
+        elif kb_type == "merge":
+            sessions = meta.get("sessions", [])
+            for sess in sessions:
+                sid = sess.get("id")
+                if sid:
+                    all_records = self.scan_room_messages(sid, days=None)
+                    new_sub = [r for r in all_records if r.get("create_time", 0) > last_msg_time]
+                    for r in new_sub:
+                        r["_source_name"] = sess.get("name", sid)
+                    new_records.extend(new_sub)
+            # 全局时间戳排序
+            new_records.sort(key=lambda x: x.get("create_time", 0))
+            
+        if not new_records:
+            return {
+                "status": "up_to_date",
+                "new_count": 0,
+                "message": "当前知识库已是最新状态，暂无新的聊天记录产生！"
+            }
+            
+        # 1. 追加到原始 Markdown 归档
+        archive_dir = os.path.join(kb_path, "01_原始群聊对话归档")
+        os.makedirs(archive_dir, exist_ok=True)
+        md_files = [f for f in os.listdir(archive_dir) if f.endswith(".md")]
+        target_md = os.path.join(archive_dir, md_files[0]) if md_files else os.path.join(archive_dir, "新增对话增量归档.md")
+        
+        with open(target_md, "a", encoding="utf-8") as f:
+            f.write(f"\n\n<!-- 增量同步于 {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (共 {len(new_records)} 条) -->\n\n")
+            for r in new_records:
+                src_label = f"[{r.get('_source_name')}] " if "_source_name" in r else ""
+                f.write(f"**[{r['time']}] {src_label}{r['sender_name']}**:\n{r['content']}\n\n")
+                
+        # 2. 追加到 JSONL
+        jsonl_dir = os.path.join(kb_path, "02_结构化数据_JSONL")
+        os.makedirs(jsonl_dir, exist_ok=True)
+        jsonl_files = [f for f in os.listdir(jsonl_dir) if f.endswith(".jsonl")]
+        target_jsonl = os.path.join(jsonl_dir, jsonl_files[0]) if jsonl_files else os.path.join(jsonl_dir, "incremental.jsonl")
+        
+        with open(target_jsonl, "a", encoding="utf-8") as f:
+            for r in new_records:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+                
+        # 3. 更新元数据
+        new_max_time = max([r.get("create_time", 0) for r in new_records])
+        meta["last_msg_time"] = new_max_time
+        meta["total_messages"] = meta.get("total_messages", 0) + len(new_records)
+        meta["last_sync_time"] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+            
+        # 4. 重新打包 Zip
+        zip_files = [f for f in os.listdir(self.data_dir) if f.startswith(meta.get("clean_name", meta.get("clean_title", ""))) and f.endswith(".zip")]
+        if zip_files:
+            zip_filepath = os.path.join(self.data_dir, zip_files[0])
+            try:
+                with zipfile.ZipFile(zip_filepath, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for root, dirs, files in os.walk(kb_path):
+                        for file in files:
+                            full_p = os.path.join(root, file)
+                            rel_p = os.path.relpath(full_p, kb_path)
+                            zf.write(full_p, rel_p)
+            except Exception:
+                pass
+                
+        return {
+            "status": "success",
+            "new_count": len(new_records),
+            "total_messages": meta["total_messages"],
+            "message": f"成功增量同步 {len(new_records)} 条最新聊天记录！"
         }

@@ -162,6 +162,42 @@ def export_merged_kb():
 def get_merge_progress():
     return jsonify(core.distillation_progress)
 
+@app.route("/api/kb/list", methods=["GET"])
+def get_kb_list():
+    """获取本地所有已构建的知识库列表"""
+    try:
+        kbs = core.list_all_knowledge_bases()
+        return jsonify({"status": "success", "kbs": kbs})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/api/kb/chat", methods=["POST"])
+def chat_with_knowledge_base():
+    """向指定知识库主动发起技术问答"""
+    data = request.json or {}
+    query = data.get("query", "").strip()
+    kb_folder = data.get("kb_folder", "").strip()
+    if not query:
+        return jsonify({"error": "缺少提问内容 query"}), 400
+    try:
+        res = core.chat_with_kb(query, kb_folder)
+        return jsonify(res)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/kb/incremental_update", methods=["POST"])
+def incremental_update_knowledge_base():
+    """一键增量同步更新知识库"""
+    data = request.json or {}
+    kb_folder = data.get("kb_folder", "").strip()
+    if not kb_folder:
+        return jsonify({"error": "缺少 kb_folder 参数"}), 400
+    try:
+        res = core.incremental_sync_kb(kb_folder)
+        return jsonify(res)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/download_kb/<filename>")
 def download_kb(filename):
     return send_from_directory(core.data_dir, filename, as_attachment=True)

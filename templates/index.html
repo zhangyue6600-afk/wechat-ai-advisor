@@ -318,7 +318,7 @@
       <!-- STEP 5: 实时群军师监控 -->
       <section id="pane-step5" class="tab-pane hidden">
         <div>
-          <div class="flex items-center justify-between mb-4">
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
             <div class="flex items-center space-x-3">
               <span class="p-2 rounded-lg bg-indigo-500/10 text-indigo-400 font-bold">Step 5</span>
               <div>
@@ -326,7 +326,19 @@
                 <p class="text-xs text-slate-400">正在监听：<span id="monitor-target-name" class="text-indigo-400 font-semibold">未选择群聊</span></p>
               </div>
             </div>
-            <div class="flex items-center space-x-3">
+            <div class="flex flex-wrap items-center gap-2.5">
+              <div class="flex items-center space-x-1.5 bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-1.5">
+                <span class="text-xs text-slate-400">📚 知识库:</span>
+                <select id="select-active-kb" onchange="handleActiveKbChange(this.value)" class="bg-transparent border-0 text-xs text-slate-200 font-medium focus:ring-0 focus:outline-none cursor-pointer">
+                  <option value="">加载知识库列表中...</option>
+                </select>
+                <button onclick="triggerIncrementalSync()" id="btn-inc-sync" title="一键增量同步最新消息追加到知识库" class="ml-1 text-[11px] px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-indigo-300 hover:text-indigo-200 border border-slate-700 transition">
+                  <span>🔄 增量更新</span>
+                </button>
+              </div>
+              <button onclick="toggleKbChatDrawer()" class="px-3.5 py-2 rounded-xl bg-indigo-600/90 hover:bg-indigo-600 text-white text-xs font-semibold transition shadow-md shadow-indigo-600/20 flex items-center space-x-1.5">
+                <span>💬 主动提问专家</span>
+              </button>
               <button id="btn-toggle-monitor" onclick="toggleMonitor()" class="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition shadow-lg shadow-emerald-600/30 flex items-center space-x-2">
                 <span id="monitor-btn-icon">▶</span>
                 <span id="monitor-btn-text">启动 0.8s 极速监控</span>
@@ -470,6 +482,46 @@
     </div>
   </main>
 
-  <script src="/static/app.js?v=1.5.1"></script>
+  <!-- 知识库专家主动问答侧边抽屉 (Chat Drawer) -->
+  <div id="kb-chat-drawer" class="hidden fixed inset-y-0 right-0 w-full sm:w-[500px] bg-slate-900/95 backdrop-blur-2xl border-l border-slate-800 shadow-2xl z-50 flex flex-col transition-all duration-300">
+    <!-- 头部 -->
+    <div class="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
+      <div class="flex items-center space-x-2.5">
+        <span class="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 text-base">💬</span>
+        <div>
+          <h3 class="text-sm font-bold text-slate-100 flex items-center space-x-1.5">
+            <span>知识库专家坐诊问答</span>
+            <span class="text-[10px] px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 font-normal">主动解惑</span>
+          </h3>
+          <p class="text-[11px] text-slate-400 truncate max-w-[340px]">当前参考知识库：<span id="kb-chat-current-title" class="text-indigo-400 font-medium">默认全局知识库</span></p>
+        </div>
+      </div>
+      <button onclick="toggleKbChatDrawer()" class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition text-sm">✕</button>
+    </div>
+    
+    <!-- 问答消息流 -->
+    <div id="kb-chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3.5 text-xs font-sans">
+      <div class="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700/60 text-slate-300 leading-relaxed">
+        👋 <strong>您好！</strong> 我是基于您提炼的微信知识库生成的专属技术架构师。<br><br>
+        遇到任何报错、硬件配置、vLLM 推理调优或群友经验，您可以随时在此直接提问，我将自动调用本地知识库中的 FAQ 问答对与实操手册为您解答！
+      </div>
+    </div>
+    
+    <!-- 提问输入区 -->
+    <div class="p-3.5 border-t border-slate-800 bg-slate-950/90 flex flex-col space-y-2">
+      <div class="flex items-end space-x-2">
+        <textarea id="kb-chat-input" rows="2" placeholder="输入技术问题或故障报错... (按 Enter 发送，Shift+Enter 换行)" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 resize-none font-sans"></textarea>
+        <button onclick="sendKbQuestion()" id="btn-send-kb-chat" class="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shadow-lg shadow-indigo-600/30 flex items-center justify-center shrink-0">
+          <span>发送</span>
+        </button>
+      </div>
+      <div class="text-[10px] text-slate-500 flex items-center justify-between px-1">
+        <span>💡 支持问答上下文检索</span>
+        <button onclick="clearKbChatHistory()" class="hover:text-slate-400 transition">清空对话记录</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=1.5.2"></script>
 </body>
 </html>
