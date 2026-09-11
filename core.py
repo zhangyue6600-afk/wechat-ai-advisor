@@ -685,6 +685,9 @@ class WeChatAdvisorCore:
 
         self.listener = Listener(self.db, interval=0.8)
         
+        # 记录是否为多会话模式：多会话模式下由前端聚焦安全同步剪贴板；单会话模式下若后端直接写入剪切板
+        is_multi_session = len(self.monitored_sessions) > 1
+        
         def make_callback(session_info):
             def _on_msg(msg: dict, lst):
                 content = msg.get("content", "").strip()
@@ -716,7 +719,8 @@ class WeChatAdvisorCore:
                             winsound.MessageBeep(winsound.MB_ICONASTERISK)
                         except Exception:
                             pass
-                    if enable_clipboard and advice:
+                    # 如果只有单个会话，后端可直接写入剪贴板；若多会话并发，则由前端聚焦会话安全写入，避免多群乱顶剪贴板
+                    if enable_clipboard and advice and not is_multi_session:
                         try:
                             pyperclip.copy(advice)
                         except Exception:

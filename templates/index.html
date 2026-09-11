@@ -296,42 +296,61 @@
             </div>
           </div>
 
-          <!-- 监控选项开关 -->
-          <div class="flex items-center space-x-6 py-2 px-4 rounded-xl bg-slate-950/60 border border-slate-800 text-xs text-slate-400 mb-6">
-            <label class="flex items-center space-x-2 cursor-pointer">
-              <input type="checkbox" id="chk-clipboard" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
-              <span>自动将推荐回复写入剪贴板（微信直接 Ctrl+V）</span>
-            </label>
-            <label class="flex items-center space-x-2 cursor-pointer">
-              <input type="checkbox" id="chk-chime" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
-              <span>提问捕获时播放提示音 (叮~)</span>
-            </label>
+          <!-- 监控选项开关与说明 -->
+          <div class="flex flex-wrap items-center justify-between gap-3 py-2.5 px-4 rounded-xl bg-slate-950/60 border border-slate-800 text-xs text-slate-400 mb-4">
+            <div class="flex items-center space-x-6">
+              <label class="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" id="chk-clipboard" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                <span>智能聚焦剪贴板同步（仅当前激活的会话自动写入剪切板，杜绝后台群串台）</span>
+              </label>
+              <label class="flex items-center space-x-2 cursor-pointer">
+                <input type="checkbox" id="chk-chime" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                <span>提问捕获时播放提示音 (叮~)</span>
+              </label>
+            </div>
+            <div class="text-[11px] text-slate-500 font-mono flex items-center space-x-1">
+              <span>💡 提示：点击下方会话胶囊可独立过滤</span>
+            </div>
+          </div>
+
+          <!-- 会话快速切换标签栏 (Pill Tabs) -->
+          <div id="session-tabs-bar" class="flex items-center space-x-2 overflow-x-auto pb-3 mb-3 border-b border-slate-800/80 scrollbar-thin">
+            <button id="tab-all-sessions" onclick="selectSessionTab('__ALL__')" class="session-tab-btn active px-3.5 py-1.5 rounded-full text-xs font-semibold bg-indigo-600 text-white shadow-md shadow-indigo-600/20 border border-indigo-500/50 flex items-center space-x-1.5 transition whitespace-nowrap">
+              <span>🌟 全部会话</span>
+              <span id="tab-badge-all" class="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-900/80 text-indigo-200">0</span>
+            </button>
+            <div id="dynamic-session-tabs" class="flex items-center space-x-2">
+              <!-- 动态插入各个群聊/私聊的专属药丸切换项 -->
+            </div>
           </div>
 
           <!-- 实时消息瀑布流看板 -->
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <!-- 左栏：最新群消息流 -->
-            <div class="bg-slate-950/70 border border-slate-800/90 rounded-xl p-4 flex flex-col h-[480px]">
+            <div class="bg-slate-950/70 border border-slate-800/90 rounded-xl p-4 flex flex-col h-[520px]">
               <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-3 text-xs font-bold text-slate-400 uppercase tracking-wider">
-                <span>群内最新实时发言</span>
+                <div class="flex items-center space-x-2">
+                  <span id="stream-panel-title">实时发言流 (全部会话)</span>
+                  <span id="active-session-indicator" class="hidden text-[10px] px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 font-normal">聚焦中</span>
+                </div>
                 <span class="flex items-center space-x-1 text-emerald-400">
                   <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
                   <span>0.8s 轮询中</span>
                 </span>
               </div>
               <div id="live-chat-stream" class="flex-1 overflow-y-auto space-y-2.5 pr-2 font-sans text-xs">
-                <div class="text-center py-20 text-slate-600">启动监控后，群内新发言将实时在此滚动...</div>
+                <div class="text-center py-24 text-slate-600">启动监控后，新发言将实时在此滚动...</div>
               </div>
             </div>
 
             <!-- 右栏：军师捕捉到的高价值提问与生成建议 -->
-            <div class="bg-slate-950/70 border border-slate-800/90 rounded-xl p-4 flex flex-col h-[480px]">
+            <div class="bg-slate-950/70 border border-slate-800/90 rounded-xl p-4 flex flex-col h-[520px]">
               <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-3 text-xs font-bold text-indigo-400 uppercase tracking-wider">
-                <span>🎯 专家建议生成卡片</span>
-                <span class="text-slate-500">点击卡片可重新复制回复</span>
+                <span id="cards-panel-title">🎯 专家建议生成卡片 (全部会话)</span>
+                <span class="text-slate-500 font-normal text-[11px]">点击卡片可随时重新复制</span>
               </div>
               <div id="advice-cards-container" class="flex-1 overflow-y-auto space-y-3 pr-2">
-                <div class="text-center py-20 text-slate-600 text-xs">群里出现技术求助时，军师将立即在此生成内行解答...</div>
+                <div class="text-center py-24 text-slate-600 text-xs">群聊或私聊出现技术求助/对话时，军师将立即在此生成专业内行解答...</div>
               </div>
             </div>
           </div>

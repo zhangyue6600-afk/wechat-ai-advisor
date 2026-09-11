@@ -23,6 +23,12 @@ function switchTab(stepId) {
   const targetBtn = document.getElementById("tab-btn-" + stepId);
   if (targetPane) targetPane.classList.remove("hidden");
   if (targetBtn) targetBtn.classList.add("active");
+
+  // 进入 Step 5 时，主动同步一次多会话 Tabs
+  if (stepId === "step5") {
+    renderSessionTabs();
+    filterPanelsBySession(currentActiveSessionId);
+  }
 }
 
 async function checkWeChatStatus() {
@@ -416,6 +422,7 @@ async function toggleMonitor() {
       if (res.ok) {
         isMonitoring = true;
         updateMonitorButtonState(true);
+        renderSessionTabs();
         initSSE();
       } else {
         alert("启动监控失败: " + data.error);
@@ -452,6 +459,129 @@ function updateMonitorButtonState(active) {
   }
 }
 
+// -------------------------------------------------------------
+// Step 5 多会话独立切换与智能聚焦剪贴板核心状态
+// -------------------------------------------------------------
+let currentActiveSessionId = "__ALL__"; // 默认聚焦在全部会话
+const sessionUnreadCounts = {};        // 各会话未读计数 { sessionId: number }
+const sessionMetaStore = {};           // 各会话元数据 { sessionId: { name, type, label } }
+const sessionLatestAdvices = {};       // 各会话最新建议 { sessionId: adviceText }
+
+function renderSessionTabs() {
+  const container = document.getElementById("dynamic-session-tabs");
+  if (!container) return;
+  container.innerHTML = "";
+
+  // 将已选会话记录到元数据
+  selectedSessions.forEach(s => {
+    sessionMetaStore[s.id] = {
+      name: s.name,
+      type: s.type,
+      label: s.type === "group" ? "👥" : "👤"
+    };
+    if (!(s.id in sessionUnreadCounts)) {
+      sessionUnreadCounts[s.id] = 0;
+    }
+  });
+
+  selectedSessions.forEach(s => {
+    const isAct = currentActiveSessionId === s.id;
+    const btn = document.createElement("button");
+    btn.id = `tab-session-${s.id.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+    btn.className = `session-tab-btn px-3.5 py-1.5 rounded-full text-xs font-semibold transition whitespace-nowrap flex items-center space-x-1.5 ${
+      isAct 
+        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20 border border-indigo-500/50' 
+        : 'bg-slate-900/80 hover:bg-slate-800 text-slate-300 border border-slate-800'
+    }`;
+    btn.onclick = () => selectSessionTab(s.id);
+    
+    const unread = sessionUnreadCounts[s.id] || 0;
+    const badgeHtml = unread > 0 
+      ? `<span class="session-unread-badge ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-rose-500 text-white animate-pulse font-bold">${unread}</span>`
+      : `<span class="session-unread-badge ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-800 text-slate-400 hidden">0</span>`;
+
+    btn.innerHTML = `
+      <span>${s.type === 'group' ? '👥' : '👤'} ${escapeHtml(s.name)}</span>
+      ${badgeHtml}
+    `;
+    container.appendChild(btn);
+  });
+
+  // 更新“全部会话”标签外观
+  const allBtn = document.getElementById("tab-all-sessions");
+  if (allBtn) {
+    if (currentActiveSessionId === "__ALL__") {
+      allBtn.className = "session-tab-btn active px-3.5 py-1.5 rounded-full text-xs font-semibold bg-indigo-600 text-white shadow-md shadow-indigo-600/20 border border-indigo-500/50 flex items-center space-x-1.5 transition whitespace-nowrap";
+    } else {
+      allBtn.className = "session-tab-btn px-3.5 py-1.5 rounded-full text-xs font-semibold bg-slate-900/80 hover:bg-slate-800 text-slate-300 border border-slate-800 flex items-center space-x-1.5 transition whitespace-nowrap";
+    }
+  }
+}
+
+function selectSessionTab(sessionId) {
+  currentActiveSessionId = sessionId;
+
+  // 清除该会话的未读红点
+  if (sessionId !== "__ALL__") {
+    sessionUnreadCounts[sessionId] = 0;
+  }
+  
+  // 重新渲染标签样式
+  renderSessionTabs();
+
+  // 更新左右面板标题与聚焦标识
+  const streamTitle = document.getElementById("stream-panel-title");
+  const cardsTitle = document.getElementById("cards-panel-title");
+  const indicator = document.getElementById("active-session-indicator");
+
+  if (sessionId === "__ALL__") {
+    if (streamTitle) streamTitle.innerText = "实时发言流 (全部会话)";
+    if (cardsTitle) cardsTitle.innerText = "🎯 专家建议生成卡片 (全部会话)";
+    if (indicator) indicator.classList.add("hidden");
+  } else {
+    const meta = sessionMetaStore[sessionId] || { name: sessionId };
+    if (streamTitle) streamTitle.innerText = `实时发言流 (${meta.name})`;
+    if (cardsTitle) cardsTitle.innerText = `🎯 专属建议卡片 (${meta.name})`;
+    if (indicator) {
+      indicator.innerText = `聚焦: ${meta.name}`;
+      indicator.classList.remove("hidden");
+    }
+
+    // 智能聚焦剪贴板：切换到该会话时，若开启了剪贴板同步且该会话有最新建议，自动无缝写入剪切板
+    const enableClipboard = document.getElementById("chk-clipboard")?.checked;
+    if (enableClipboard && sessionLatestAdvices[sessionId]) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(sessionLatestAdvices[sessionId]).catch(() => {});
+      }
+    }
+  }
+
+  // 立即按当前会话过滤消息流与卡片
+  filterPanelsBySession(sessionId);
+}
+
+function filterPanelsBySession(sessionId) {
+  const streamRows = document.querySelectorAll("#live-chat-stream .live-stream-row");
+  streamRows.forEach(row => {
+    const sid = row.getAttribute("data-session-id");
+    if (sessionId === "__ALL__" || sid === sessionId) {
+      row.classList.remove("hidden");
+    } else {
+      row.classList.add("hidden");
+    }
+  });
+
+  const cardElements = document.querySelectorAll("#advice-cards-container .live-advice-card");
+  cardElements.forEach(card => {
+    const sid = card.getAttribute("data-session-id");
+    if (sessionId === "__ALL__" || sid === sessionId) {
+      card.classList.remove("hidden");
+    } else {
+      card.classList.add("hidden");
+    }
+  });
+}
+
 function initSSE() {
   if (eventSource) eventSource.close();
   eventSource = new EventSource("/api/monitor/events");
@@ -476,12 +606,28 @@ function renderIncomingEvent(ev) {
     cardsContainer.innerHTML = "";
   }
   
+  const sid = ev.session_id || "";
   const isGroup = ev.session_type === "group";
   const sessionBadge = ev.session_name ? `<span class="px-1.5 py-0.5 rounded text-[10px] ${isGroup ? 'bg-indigo-950 text-indigo-300 border border-indigo-800' : 'bg-emerald-950 text-emerald-300 border border-emerald-800'} font-mono">${ev.session_label || (isGroup ? '👥 群聊' : '👤 私聊')} ${escapeHtml(ev.session_name)}</span>` : '';
   
-  // 1. 追加到左侧消息流
+  // 记录会话元数据（若动态发现新会话）
+  if (sid && !sessionMetaStore[sid]) {
+    sessionMetaStore[sid] = {
+      name: ev.session_name || sid,
+      type: ev.session_type || "group",
+      label: isGroup ? "👥" : "👤"
+    };
+    renderSessionTabs();
+  }
+
+  // 1. 追加到左侧消息流 (打上 data-session-id 标记)
   const msgRow = document.createElement("div");
-  msgRow.className = "p-2 rounded-lg bg-slate-900/80 border border-slate-800/80 flex items-start space-x-2.5";
+  msgRow.className = "live-stream-row p-2.5 rounded-lg bg-slate-900/80 border border-slate-800/80 flex items-start space-x-2.5 transition";
+  msgRow.setAttribute("data-session-id", sid);
+  if (currentActiveSessionId !== "__ALL__" && currentActiveSessionId !== sid) {
+    msgRow.classList.add("hidden");
+  }
+
   msgRow.innerHTML = `
     <span class="text-[10px] text-slate-500 font-mono whitespace-nowrap mt-0.5">${ev.time}</span>
     <div class="flex-1 min-w-0">
@@ -489,26 +635,63 @@ function renderIncomingEvent(ev) {
         ${sessionBadge}
         <span class="font-semibold text-slate-300 text-xs">${escapeHtml(ev.sender)}:</span>
       </div>
-      <span class="text-slate-200 text-xs break-words">${escapeHtml(ev.content)}</span>
+      <span class="text-slate-200 text-xs break-words leading-relaxed">${escapeHtml(ev.content)}</span>
     </div>
   `;
   streamContainer.prepend(msgRow);
+
+  // 2. 更新全部会话计数
+  const allCountBadge = document.getElementById("tab-badge-all");
+  if (allCountBadge) {
+    const totalCount = document.querySelectorAll("#live-chat-stream .live-stream-row").length;
+    allCountBadge.innerText = totalCount;
+  }
   
-  // 2. 如果是高价值讨论且生成了建议，追加到右侧建议卡片
+  // 3. 如果是高价值讨论且生成了建议，追加到右侧建议卡片
   if (ev.is_question && ev.advice) {
+    // 缓存该会话的最新建议
+    if (sid) {
+      sessionLatestAdvices[sid] = ev.advice;
+    }
+
+    // 智能聚焦剪贴板控制：仅当当前处于【全部会话】或正好在【当前活跃会话】时，才将建议写入剪贴板
+    const enableClipboard = document.getElementById("chk-clipboard")?.checked;
+    if (enableClipboard) {
+      if (currentActiveSessionId === "__ALL__" || currentActiveSessionId === sid) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(ev.advice).catch(() => {});
+        }
+      }
+    }
+
+    // 如果该消息产生在后台会话（非当前聚焦会话），累加未读红点
+    if (currentActiveSessionId !== "__ALL__" && currentActiveSessionId !== sid) {
+      sessionUnreadCounts[sid] = (sessionUnreadCounts[sid] || 0) + 1;
+      renderSessionTabs();
+    }
+
     const cardId = "card-" + Math.random().toString(36).substring(2, 9);
     cardDataStore[cardId] = {
       content: ev.content || "",
       sender: ev.sender || "群友",
       session_name: ev.session_name || "",
-      session_type: ev.session_type || "group"
+      session_type: ev.session_type || "group",
+      session_id: sid
     };
+
     const card = document.createElement("div");
     card.id = cardId;
-    card.className = "p-4 rounded-xl bg-indigo-950/20 border border-indigo-500/40 hover:border-indigo-400 transition space-y-2.5 relative group shadow-lg";
+    card.className = "live-advice-card p-4 rounded-xl bg-indigo-950/20 border border-indigo-500/40 hover:border-indigo-400 transition space-y-2.5 relative group shadow-lg";
+    card.setAttribute("data-session-id", sid);
+    if (currentActiveSessionId !== "__ALL__" && currentActiveSessionId !== sid) {
+      card.classList.add("hidden");
+    }
     
     const intentBadge = ev.intent ? `<span class="px-2 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30">${escapeHtml(ev.intent)}</span>` : '';
-    
+    const clipboardHint = (currentActiveSessionId === "__ALL__" || currentActiveSessionId === sid) && enableClipboard
+      ? `<span class="text-emerald-400 text-[10px] bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">✓ 已就绪直接 Ctrl+V</span>`
+      : `<span class="text-slate-400 text-[10px] bg-slate-900 px-2 py-0.5 rounded border border-slate-800">需点击复制或切到该Tab</span>`;
+
     card.innerHTML = `
       <div class="flex items-center justify-between text-xs">
         <div class="flex items-center space-x-2">
@@ -525,7 +708,8 @@ function renderIncomingEvent(ev) {
       </div>
       <div class="advice-content text-xs text-emerald-300 font-sans leading-relaxed bg-emerald-950/20 p-3 rounded-lg border border-emerald-500/30">
         <span class="font-bold block text-emerald-400 text-[11px] mb-1.5 flex items-center justify-between">
-          <span>💡 建议回复 (已自动存入剪贴板):</span>
+          <span>💡 建议回复:</span>
+          ${clipboardHint}
         </span>
         <div class="advice-text whitespace-pre-wrap">${escapeHtml(ev.advice)}</div>
       </div>
