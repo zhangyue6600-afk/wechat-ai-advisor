@@ -104,26 +104,40 @@ def scan_merged_rooms():
     if not sessions:
         return jsonify({"error": "缺少 sessions 列表"}), 400
     total_messages = 0
-    earliest_time = None
-    latest_time = None
     detailed_list = []
+    earliest_times = []
+    latest_times = []
     for s in sessions:
-        rid = s.get("room_id")
-        rname = s.get("room_name") or rid
+        rid = s.get("room_id") or s.get("id")
+        rname = s.get("room_name") or s.get("name") or rid
+        if not rid:
+            continue
         scan_res = core.scan_room_messages(rid)
         cnt = scan_res.get("total_messages", 0)
         total_messages += cnt
+        st = scan_res.get("start_time")
+        et = scan_res.get("end_time")
+        if st and st != "无记录":
+            earliest_times.append(st)
+        if et and et != "无记录":
+            latest_times.append(et)
         detailed_list.append({
             "room_id": rid,
             "room_name": rname,
             "total_messages": cnt,
-            "earliest_time": scan_res.get("earliest_time"),
-            "latest_time": scan_res.get("latest_time")
+            "start_time": st,
+            "end_time": et,
+            "earliest_time": st,
+            "latest_time": et
         })
+    earliest_str = min(earliest_times) if earliest_times else "未知"
+    latest_str = max(latest_times) if latest_times else "未知"
     return jsonify({
         "status": "success",
         "total_sessions": len(sessions),
         "total_messages": total_messages,
+        "earliest_time": earliest_str,
+        "latest_time": latest_str,
         "details": detailed_list
     })
 

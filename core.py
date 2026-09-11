@@ -404,6 +404,50 @@ class WeChatAdvisorCore:
             "shards": active_shards
         }
 
+    def fetch_room_messages(self, room_id: str, room_name: str, min_ctime: int = 0) -> list:
+        """从微信本地库中拉取指定会话大于等于 min_ctime 的消息记录"""
+        if self.db is None:
+            self._init_db()
+        target = "Msg_" + _md5_hex(room_id.encode())
+        records = []
+        is_private = not room_id.endswith("@chatroom")
+        for rel in self.db._message_dbs():
+            try:
+                conn = self.db._open(rel)
+                cur = conn.cursor()
+                query = f"""
+                    SELECT local_id, local_type, real_sender_id, create_time, message_content
+                    FROM {target} WHERE create_time >= ? ORDER BY sort_seq ASC
+                """
+                cur.execute(query, (min_ctime,))
+                for r in cur.fetchall():
+                    lid, ltype, sid, ctime, mcontent = r
+                    body = parse_real_content(mcontent)
+                    if not body or "拍了拍" in body:
+                        continue
+                    if is_private:
+                        if sid == 2 or sid == 0 or sid == 15:
+                            sender_nick = "我"
+                        else:
+                            sender_nick = room_name
+                    else:
+                        sender_nick = self.db.get_nickname(sid) or str(sid)
+                    records.append({
+                        "id": lid,
+                        "time": ctime,
+                        "create_time": ctime,
+                        "datetime": datetime.datetime.fromtimestamp(ctime).strftime("%Y-%m-%d %H:%M:%S"),
+                        "date": datetime.datetime.fromtimestamp(ctime).strftime("%Y-%m-%d"),
+                        "sender": sender_nick,
+                        "sender_name": sender_nick,
+                        "content": body
+                    })
+                conn.close()
+            except Exception:
+                pass
+        records.sort(key=lambda x: x["time"])
+        return records
+
     def export_knowledge_base(self, room_id: str, room_name: str, days_limit: Optional[int] = None) -> dict:
         """全量或限期导出聊天记录并自动构建知识库压缩包"""
         if self.db is None:
@@ -626,8 +670,8 @@ class WeChatAdvisorCore:
         source_names = []
 
         for s in sessions:
-            rid = s.get("room_id")
-            rname = s.get("room_name") or rid
+            rid = s.get("room_id") or s.get("id")
+            rname = s.get("room_name") or s.get("name") or rid
             if not rid:
                 continue
             source_names.append(rname)
@@ -759,7 +803,7 @@ class WeChatAdvisorCore:
             "source_names": source_names,
             "clean_title": clean_title,
             "created_at": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "last_msg_time": max([r.get("create_time", 0) for r in all_records]) if all_records else int(time.time()),
+            "last_msg_time": max([r.get("timestamp", 0) for r in all_records]) if all_records else int(time.time()),
             "total_messages": len(all_records),
             "distilled_count": len(distilled_qa_list),
             "kb_title": clean_title
@@ -1160,22 +1204,22 @@ class WeChatAdvisorCore:
         new_records = []
         if kb_type == "single":
             room_id = meta.get("room_id")
+            room_name = meta.get("room_name") or room_id
             if not room_id:
                 return {"status": "error", "message": "缺少 room_id 元数据"}
-            all_records = self.scan_room_messages(room_id, days=None)
-            new_records = [r for r in all_records if r.get("create_time", 0) > last_msg_time]
+            new_records = self.fetch_room_messages(room_id, room_name, min_ctime=last_msg_time + 1)
         elif kb_type == "merge":
             sessions = meta.get("sessions", [])
             for sess in sessions:
-                sid = sess.get("id")
+                sid = sess.get("id") or sess.get("room_id")
+                sname = sess.get("name") or sess.get("room_name") or sid
                 if sid:
-                    all_records = self.scan_room_messages(sid, days=None)
-                    new_sub = [r for r in all_records if r.get("create_time", 0) > last_msg_time]
+                    new_sub = self.fetch_room_messages(sid, sname, min_ctime=last_msg_time + 1)
                     for r in new_sub:
-                        r["_source_name"] = sess.get("name", sid)
+                        r["_source_name"] = sname
                     new_records.extend(new_sub)
             # 全局时间戳排序
-            new_records.sort(key=lambda x: x.get("create_time", 0))
+            new_records.sort(key=lambda x: x.get("time", 0))
             
         if not new_records:
             return {
@@ -1194,7 +1238,9 @@ class WeChatAdvisorCore:
             f.write(f"\n\n<!-- 增量同步于 {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (共 {len(new_records)} 条) -->\n\n")
             for r in new_records:
                 src_label = f"[{r.get('_source_name')}] " if "_source_name" in r else ""
-                f.write(f"**[{r['time']}] {src_label}{r['sender_name']}**:\n{r['content']}\n\n")
+                t_val = r.get("datetime") or r.get("time_str") or str(r.get("time", ""))
+                s_name = r.get("sender_name") or r.get("sender") or "发言人"
+                f.write(f"**[{t_val}] {src_label}{s_name}**:\n{r['content']}\n\n")
                 
         # 2. 追加到 JSONL
         jsonl_dir = os.path.join(kb_path, "02_结构化数据_JSONL")
@@ -1207,7 +1253,7 @@ class WeChatAdvisorCore:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
                 
         # 3. 更新元数据
-        new_max_time = max([r.get("create_time", 0) for r in new_records])
+        new_max_time = max([r.get("time", r.get("timestamp", 0)) for r in new_records])
         meta["last_msg_time"] = new_max_time
         meta["total_messages"] = meta.get("total_messages", 0) + len(new_records)
         meta["last_sync_time"] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')

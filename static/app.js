@@ -351,20 +351,12 @@ async function prepareMergedKBExport() {
     });
     const data = await res.json();
     document.getElementById("scan-msg-count").innerText = (data.total_messages || 0).toLocaleString() + " 条 (多群合计)";
-    
-    // 寻找最早和最晚记录时间
-    let earliest = null;
-    let latest = null;
-    if (data.details && data.details.length > 0) {
-      for (const d of data.details) {
-        if (d.earliest_time && (!earliest || d.earliest_time < earliest)) earliest = d.earliest_time;
-        if (d.latest_time && (!latest || d.latest_time > latest)) latest = d.latest_time;
-      }
-    }
-    document.getElementById("scan-start-time").innerText = earliest || "暂无记录";
-    document.getElementById("scan-end-time").innerText = latest || "暂无记录";
+    document.getElementById("scan-start-time").innerText = data.earliest_time || "暂无记录";
+    document.getElementById("scan-end-time").innerText = data.latest_time || "暂无记录";
   } catch (err) {
-    document.getElementById("scan-msg-count").innerText = "计算完成";
+    document.getElementById("scan-msg-count").innerText = "暂无统计";
+    document.getElementById("scan-start-time").innerText = "暂无记录";
+    document.getElementById("scan-end-time").innerText = "暂无记录";
   }
 }
 
