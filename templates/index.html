@@ -178,8 +178,10 @@
 
           <!-- 底部操作栏 -->
           <div class="mt-6 pt-4 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
-            <div class="text-xs text-slate-400">
-              💡 提示：如需提炼群知识库，请先点击某一个技术群的【扫描记录】进入 Step 3。
+            <div class="flex items-center space-x-2">
+              <button id="btn-merged-kb-entry" onclick="prepareMergedKBExport()" class="px-4 py-2 rounded-xl bg-purple-600/80 hover:bg-purple-500 text-white font-bold text-xs transition shadow-lg shadow-purple-600/30 flex items-center space-x-1.5 disabled:opacity-40" disabled>
+                <span>🔗 合并提炼综合知识库 (<span id="merge-selected-count">0</span>个)</span>
+              </button>
             </div>
             <div class="flex items-center space-x-3">
               <button onclick="switchTab('step3')" class="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs transition">
@@ -198,9 +200,9 @@
         <div class="max-w-2xl">
           <div class="flex items-center space-x-3 mb-4">
             <span class="p-2 rounded-lg bg-indigo-500/10 text-indigo-400 font-bold">Step 3</span>
-            <h2 class="text-xl font-bold">扫描会话历史记录（群聊 / 私聊均支持）</h2>
+            <h2 id="step3-heading" class="text-xl font-bold">扫描会话历史记录（群聊 / 私聊均支持）</h2>
           </div>
-          <p class="text-slate-400 text-sm mb-6">
+          <p id="step3-desc" class="text-slate-400 text-sm mb-6">
             基于 Windows 底层只读文件映射，统计该群聊或好友私聊在本地的完整发言规模与时间分布：
           </p>
 
@@ -222,6 +224,29 @@
           </div>
 
           <div class="space-y-4">
+            <!-- 知识库命名（合并模式下可用） -->
+            <div id="merge-title-container" class="hidden">
+              <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">综合知识库名称</label>
+              <input type="text" id="merge-custom-title" placeholder="如：1Cat-vLLM_全群综合技术知识库" class="w-full bg-slate-950/80 border border-purple-500/50 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-purple-400 text-slate-200">
+            </div>
+
+            <!-- 深度提炼模式开关 -->
+            <div class="p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+              <div class="flex items-center justify-between">
+                <div>
+                  <span class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <span>🧠 大模型深度技术蒸馏模式 (Q&A 问答对提炼)</span>
+                    <span class="px-1.5 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 font-bold">高质推荐</span>
+                  </span>
+                  <p class="text-[11px] text-slate-400 mt-0.5">调用大模型自动识别报错与方案，生成结构化 FAQ 技术手册，告别流水账！</p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" id="cfg-deep-distill" class="sr-only peer" checked>
+                  <div class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                </label>
+              </div>
+            </div>
+
             <label class="block text-xs font-semibold uppercase text-slate-400">选择要提取的范围</label>
             <div class="grid grid-cols-3 gap-3">
               <button onclick="setExportDays(null, this)" class="export-range-btn active">全部历史记录</button>
@@ -229,11 +254,24 @@
               <button onclick="setExportDays(7, this)" class="export-range-btn">最近 7 天</button>
             </div>
 
-            <div class="pt-4 flex items-center space-x-3">
-              <button onclick="startExportKB()" id="btn-export-kb" class="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition shadow-lg shadow-indigo-600/30 flex items-center space-x-2">
-                <span>开始提炼 AI 知识库与导出</span>
-              </button>
-              <span id="export-spin" class="text-xs text-slate-400 hidden animate-pulse">正在离线解密与构建，请稍候...</span>
+            <div class="pt-4 flex flex-col space-y-3">
+              <div class="flex items-center space-x-3">
+                <button onclick="handleStartExport()" id="btn-export-kb" class="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition shadow-lg shadow-indigo-600/30 flex items-center space-x-2">
+                  <span id="btn-export-text">开始提炼 AI 知识库与导出</span>
+                </button>
+                <span id="export-spin" class="text-xs text-slate-400 hidden animate-pulse">正在离线解密与构建，请稍候...</span>
+              </div>
+
+              <!-- 深度提炼实时进度卡片 -->
+              <div id="distill-progress-card" class="hidden p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/40">
+                <div class="flex items-center justify-between text-xs mb-1.5">
+                  <span id="distill-progress-text" class="text-purple-300 font-medium">正在准备大模型提炼...</span>
+                  <span id="distill-progress-percent" class="text-purple-400 font-bold">0%</span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                  <div id="distill-progress-bar" class="bg-gradient-to-r from-indigo-500 to-purple-500 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

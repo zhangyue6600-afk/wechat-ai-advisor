@@ -50,38 +50,69 @@ def search_bing(query: str, max_results: int = 2) -> str:
     except Exception:
         return ""
 
-def search_local_kb(query: str, kb_dir: str, max_chars: int = 800) -> str:
-    """在本地已提炼的知识库专题中进行关键词相关度检索"""
-    if not os.path.exists(kb_dir):
-        return ""
+def search_local_kb(query: str, kb_dir: str, max_chars: int = 1200) -> str:
+    """在本地已提炼的知识库（包括当前会话与多群综合知识库）专题及问答对中进行深度相关度检索"""
     words = [w for w in re.split(r"[\s,，?？!！。、]+", query) if len(w) >= 2]
     if not words:
         return ""
-    
+
+    search_dirs = []
+    if os.path.exists(kb_dir):
+        search_dirs.append(kb_dir)
+
+    # 扫描外层 output_kbs 中所有的综合/合并知识库目录
+    parent_output = os.path.dirname(os.path.abspath(kb_dir))
+    if os.path.exists(parent_output):
+        for entry in os.listdir(parent_output):
+            full_entry = os.path.join(parent_output, entry)
+            if os.path.isdir(full_entry) and full_entry not in search_dirs:
+                if any(kw in entry for kw in ["综合", "合并", "Merged", "vLLM"]):
+                    search_dirs.append(full_entry)
+
     matches = []
-    for md_file in glob.glob(os.path.join(kb_dir, "**/*.md"), recursive=True):
-        try:
-            with open(md_file, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
-            score = sum(content.lower().count(w.lower()) for w in words)
-            if score > 0:
-                paragraphs = content.split("\n\n")
-                best_p = ""
-                best_score = 0
-                for p in paragraphs:
-                    ps = sum(p.lower().count(w.lower()) for w in words)
-                    if ps > best_score and len(p.strip()) > 25:
-                        best_score = ps
-                        best_p = p.strip()
-                if best_p:
-                    fname = os.path.basename(md_file)
-                    matches.append((best_score, f"【群内经验来源: {fname}】\n{best_p}"))
-        except Exception:
-            pass
-            
+    for s_dir in search_dirs:
+        # 1. 优先检索精选高价值问答对 QA.jsonl
+        qa_file = os.path.join(s_dir, "01_精选高价值问答对_QA.jsonl")
+        if os.path.exists(qa_file):
+            try:
+                with open(qa_file, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        qa_obj = json.loads(line)
+                        q_text = qa_obj.get("question", "")
+                        a_text = qa_obj.get("solution", "")
+                        combined = f"{q_text}\n{a_text}"
+                        score = sum(combined.lower().count(w.lower()) for w in words)
+                        if score > 0:
+                            matches.append((score * 2.0, f"【🎯 精选技术FAQ问答对】\n问: {q_text}\n答: {a_text}"))
+            except Exception:
+                pass
+
+        # 2. 检索所有技术专题与排错手册 Markdown
+        for md_file in glob.glob(os.path.join(s_dir, "**/*.md"), recursive=True):
+            try:
+                with open(md_file, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                score = sum(content.lower().count(w.lower()) for w in words)
+                if score > 0:
+                    paragraphs = content.split("\n\n")
+                    best_p = ""
+                    best_score = 0
+                    for p in paragraphs:
+                        ps = sum(p.lower().count(w.lower()) for w in words)
+                        if ps > best_score and len(p.strip()) > 25:
+                            best_score = ps
+                            best_p = p.strip()
+                    if best_p:
+                        fname = os.path.basename(md_file)
+                        matches.append((best_score, f"【群内经验/手册: {fname}】\n{best_p}"))
+            except Exception:
+                pass
+
     matches.sort(key=lambda x: x[0], reverse=True)
     if matches:
-        return "\n\n".join([m[1] for m in matches[:2]])[:max_chars]
+        return "\n\n".join([m[1] for m in matches[:3]])[:max_chars]
     return ""
 
 def parse_real_content(raw_bytes) -> str:
@@ -157,6 +188,15 @@ class WeChatAdvisorCore:
         self.monitored_room_name = None
         self.event_subscribers = []
         self.recent_events = []
+        self.distillation_progress = {
+            "is_running": False,
+            "status": "idle",
+            "current": 0,
+            "total": 0,
+            "percent": 0,
+            "message": "",
+            "result": None
+        }
         self.llm_config = {
             "api_url": "https://api.deepseek.com/v1",
             "api_key": "",
@@ -499,6 +539,226 @@ class WeChatAdvisorCore:
             "zip_path": zip_filepath,
             "download_url": f"/api/download_kb/{zip_filename}"
         }
+
+    def _call_llm_for_distillation(self, chunk_text: str) -> str:
+        """调用配置的大模型对微信技术交流切片进行深度结构化提炼"""
+        api_url = self.llm_config.get("api_url", "").strip()
+        api_key = self.llm_config.get("api_key", "").strip()
+        model = self.llm_config.get("model", "qwen27b").strip()
+        if not api_url:
+            return ""
+
+        clean_key = api_key if api_key else "EMPTY"
+        proxies = {"http": None, "https": None} if is_private_ip(api_url) else None
+        headers = {
+            "Authorization": f"Bearer {clean_key}",
+            "Content-Type": "application/json"
+        }
+        system_prompt = (
+            "你是一名资深的大模型推理系统架构师和技术专家。\n"
+            "以下是一段从多个技术群中提取的真实聊天记录切片。请对其中的技术交流内容进行高浓度信息提炼与蒸馏：\n"
+            "【提炼原则】：\n"
+            "1. 全程必须使用规范地道的简体中文！\n"
+            "2. 提取出真实发生的高价值技术求助、故障报错及群友给出的实测有效解决方案；\n"
+            "3. 务必保留关键软硬件参数（如 GPU型号、CUDA版本、显存、TP并行度、AWQ/GPTQ量化、启动命令或配置参数）；\n"
+            "4. 坚决过滤无意义寒暄、灌水、表情包；若该切片全为闲聊或无明确技术结论，直接回复'【无有效技术沉淀】'即可；\n"
+            "5. 输出清晰的 Markdown 问答块，格式格式如下：\n"
+            "### 问答/故障：[一句话概括核心问题]\n"
+            "- **核心痛点/报错现象**：...\n"
+            "- **根因分析/环境因素**：...\n"
+            "- **有效实测解决方案**：...\n"
+        )
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"请深度提炼以下微信技术群交流切片：\n\n{chunk_text}"}
+            ],
+            "temperature": 0.3,
+            "max_tokens": 1024
+        }
+        try:
+            target_url = api_url.rstrip("/") + "/chat/completions"
+            resp = requests.post(target_url, headers=headers, json=payload, timeout=60, proxies=proxies)
+            if resp.status_code == 200:
+                data = resp.json()
+                msg = data["choices"][0]["message"]
+                content = msg.get("content") or ""
+                # 清洗 reasoning 泄露
+                if "<think>" in content and "</think>" in content:
+                    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+                return content.strip()
+        except Exception:
+            pass
+        return ""
+
+    def export_merged_knowledge_base(
+        self,
+        sessions: List[dict],
+        kb_title: str,
+        days_limit: Optional[int] = None,
+        deep_distill: bool = False
+    ) -> dict:
+        """合并多个群聊/私聊记录，支持时间切片与大模型深度 Q&A 蒸馏提炼"""
+        if self.db is None:
+            self._init_db()
+
+        clean_title = re.sub(r'[\\/:*?"<>|]', '_', kb_title.strip()) or "综合技术交流知识库"
+        min_ctime = 0
+        if days_limit:
+            min_ctime = int(time.time()) - (days_limit * 86400)
+
+        all_records = []
+        source_names = []
+
+        for s in sessions:
+            rid = s.get("room_id")
+            rname = s.get("room_name") or rid
+            if not rid:
+                continue
+            source_names.append(rname)
+            target = "Msg_" + _md5_hex(rid.encode())
+            is_private = not rid.endswith("@chatroom")
+
+            for rel in self.db._message_dbs():
+                try:
+                    conn = self.db._open(rel)
+                    cur = conn.cursor()
+                    query = f"""
+                        SELECT local_id, local_type, real_sender_id, create_time, message_content
+                        FROM {target} WHERE create_time >= ? ORDER BY sort_seq ASC
+                    """
+                    cur.execute(query, (min_ctime,))
+                    for r in cur.fetchall():
+                        lid, ltype, sid, ctime, mcontent = r
+                        body = parse_real_content(mcontent)
+                        if not body or "拍了拍" in body:
+                            continue
+                        if is_private:
+                            sender_nick = "我" if sid in (2, 0, 15) else rname
+                        else:
+                            sender_nick = self.db.get_nickname(sid) or str(sid)
+                        
+                        dt = datetime.datetime.fromtimestamp(ctime).strftime("%Y-%m-%d %H:%M:%S")
+                        all_records.append({
+                            "session_id": rid,
+                            "source_name": rname,
+                            "timestamp": ctime,
+                            "time_str": dt,
+                            "sender": sender_nick,
+                            "content": body
+                        })
+                except Exception:
+                    continue
+
+        # 按毫秒时间戳进行全局排序
+        all_records.sort(key=lambda x: x["timestamp"])
+
+        # 创建输出目录结构
+        kb_folder_name = f"{clean_title}_AI知识库"
+        kb_path = os.path.join(self.data_dir, kb_folder_name)
+        os.makedirs(kb_path, exist_ok=True)
+        os.makedirs(os.path.join(kb_path, "00_技术专题与避坑指南"), exist_ok=True)
+        os.makedirs(os.path.join(kb_path, "01_原始群聊对话归档"), exist_ok=True)
+        os.makedirs(os.path.join(kb_path, "02_结构化数据_JSONL"), exist_ok=True)
+
+        # 1. 原始对话流水账 Markdown
+        raw_md_path = os.path.join(kb_path, "01_原始群聊对话归档", "多群合并全量对话归档.md")
+        with open(raw_md_path, "w", encoding="utf-8") as f:
+            f.write(f"# {clean_title} · 多群合并全量对话归档\n\n")
+            f.write(f"- **合并来源**: {', '.join(source_names)}\n")
+            f.write(f"- **总对话条数**: {len(all_records)} 条\n")
+            f.write(f"- **归并生成时间**: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n---\n\n")
+            for item in all_records:
+                f.write(f"**[{item['source_name']}] [{item['time_str']}] {item['sender']}**:\n{item['content']}\n\n")
+
+        # 2. 结构化 JSONL 数据
+        jsonl_path = os.path.join(kb_path, "02_结构化数据_JSONL", "多群合并数据集.jsonl")
+        with open(jsonl_path, "w", encoding="utf-8") as f:
+            for item in all_records:
+                f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+        # 3. 智能时间切片与大模型深度 Q&A 蒸馏
+        distilled_qa_list = []
+        if deep_distill and len(all_records) > 0:
+            # 按 10 分钟闲置或达到 20 条消息进行切片 (Chunking)
+            chunks = []
+            curr_chunk = []
+            last_ts = 0
+            for item in all_records:
+                if curr_chunk and (item["timestamp"] - last_ts > 600 or len(curr_chunk) >= 20):
+                    chunks.append(curr_chunk)
+                    curr_chunk = []
+                curr_chunk.append(item)
+                last_ts = item["timestamp"]
+            if curr_chunk:
+                chunks.append(curr_chunk)
+
+            total_chunks = min(len(chunks), 40)  # 精选最多 40 个技术讨论窗口
+            self.distillation_progress["total"] = total_chunks
+            self.distillation_progress["is_running"] = True
+            self.distillation_progress["status"] = "distilling"
+
+            for idx, c in enumerate(chunks[:total_chunks]):
+                self.distillation_progress["current"] = idx + 1
+                self.distillation_progress["percent"] = int(((idx + 1) / total_chunks) * 100)
+                self.distillation_progress["message"] = f"正在让大模型深度蒸馏第 {idx + 1}/{total_chunks} 个技术交流切片..."
+
+                chunk_text = "\n".join([f"[{m['source_name']}] {m['sender']}: {m['content']}" for m in c])
+                res = self._call_llm_for_distillation(chunk_text)
+                if res and "无有效技术沉淀" not in res and len(res) > 20:
+                    distilled_qa_list.append(res)
+
+            self.distillation_progress["status"] = "completed"
+            self.distillation_progress["is_running"] = False
+            self.distillation_progress["percent"] = 100
+
+        # 保存提炼好的技术专题与避坑手册
+        qa_doc_path = os.path.join(kb_path, "00_技术专题与避坑指南", "01_多群聚合实测经验与避坑指南.md")
+        with open(qa_doc_path, "w", encoding="utf-8") as f:
+            f.write(f"# {clean_title} · 核心技术专题与实测避坑手册\n\n")
+            f.write(f"> 基于群聊真实报错、环境参数与排错实录，由本地大模型深度提炼沉淀。\n\n")
+            if distilled_qa_list:
+                for idx, qa in enumerate(distilled_qa_list, 1):
+                    f.write(f"## 专题实录 {idx}\n{qa}\n\n---\n\n")
+            else:
+                f.write("（未启用大模型深度蒸馏，或当前切片中未提取到结构化技术问答）\n")
+
+        # 4. 生成 Agent_Prompt.md
+        prompt_path = os.path.join(kb_path, "Agent_Prompt.md")
+        with open(prompt_path, "w", encoding="utf-8") as f:
+            f.write(f"""# {clean_title} · 专属 AI 军师系统设定
+
+你是一个融合了【{', '.join(source_names)}】所有实测经验的顶级技术军师与架构师。
+你熟知群内老玩家所讨论过的所有底层报错、量化技巧、显存优化以及排错避坑方案。
+
+## 回复准则：
+1. 优先调用【00_技术专题与避坑指南】中的真实实测参数与解决方案；
+2. 保持技术群老兵的沉稳、极客、直奔要害风格；
+3. 输出纯正中文，杜绝机械套话。
+""")
+
+        # 5. 打包 Zip
+        zip_filename = f"{clean_title}_AI综合知识库.zip"
+        zip_filepath = os.path.join(self.data_dir, zip_filename)
+        with zipfile.ZipFile(zip_filepath, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, dirs, files in os.walk(kb_path):
+                for file in files:
+                    full_p = os.path.join(root, file)
+                    rel_p = os.path.relpath(full_p, kb_path)
+                    zf.write(full_p, rel_p)
+
+        res_dict = {
+            "status": "success",
+            "total_exported": len(all_records),
+            "distilled_count": len(distilled_qa_list),
+            "folder_name": kb_folder_name,
+            "zip_filename": zip_filename,
+            "zip_path": zip_filepath,
+            "download_url": f"/api/download_kb/{zip_filename}"
+        }
+        self.distillation_progress["result"] = res_dict
+        return res_dict
 
     def analyze_intent(self, text: str, session_type: str = "group") -> Tuple[bool, str]:
         """分析消息意图：私聊一律触发高情商建议；群聊过滤纯表情与水聊"""

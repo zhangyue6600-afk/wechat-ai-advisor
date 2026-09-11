@@ -97,6 +97,71 @@ def export_kb():
     res = core.export_knowledge_base(room_id, room_name, days_limit=days)
     return jsonify(res)
 
+@app.route("/api/merge/scan", methods=["POST"])
+def scan_merged_rooms():
+    data = request.json or {}
+    sessions = data.get("sessions", [])
+    if not sessions:
+        return jsonify({"error": "缺少 sessions 列表"}), 400
+    total_messages = 0
+    earliest_time = None
+    latest_time = None
+    detailed_list = []
+    for s in sessions:
+        rid = s.get("room_id")
+        rname = s.get("room_name") or rid
+        scan_res = core.scan_room_messages(rid)
+        cnt = scan_res.get("total_messages", 0)
+        total_messages += cnt
+        detailed_list.append({
+            "room_id": rid,
+            "room_name": rname,
+            "total_messages": cnt,
+            "earliest_time": scan_res.get("earliest_time"),
+            "latest_time": scan_res.get("latest_time")
+        })
+    return jsonify({
+        "status": "success",
+        "total_sessions": len(sessions),
+        "total_messages": total_messages,
+        "details": detailed_list
+    })
+
+@app.route("/api/merge/export", methods=["POST"])
+def export_merged_kb():
+    data = request.json or {}
+    sessions = data.get("sessions", [])
+    kb_title = data.get("kb_title", "综合技术交流知识库")
+    days = data.get("days_limit")
+    deep_distill = data.get("deep_distill", False)
+    if not sessions:
+        return jsonify({"error": "缺少 sessions 列表"}), 400
+    
+    # 异步执行大模型深度提炼或直接执行
+    if deep_distill:
+        core.distillation_progress["is_running"] = True
+        core.distillation_progress["status"] = "starting"
+        core.distillation_progress["current"] = 0
+        core.distillation_progress["total"] = 0
+        core.distillation_progress["percent"] = 0
+        core.distillation_progress["message"] = "正在初始化多群数据并切片..."
+        core.distillation_progress["result"] = None
+        
+        thread = threading.Thread(
+            target=core.export_merged_knowledge_base,
+            args=(sessions, kb_title, days, True),
+            daemon=True
+        )
+        thread.start()
+        return jsonify({"status": "started", "message": "深度提炼已在后台启动"})
+    else:
+        res = core.export_merged_knowledge_base(sessions, kb_title, days_limit=days, deep_distill=False)
+        return jsonify(res)
+
+@app.route("/api/merge/progress", methods=["GET"])
+def get_merge_progress():
+    return jsonify(core.distillation_progress)
+
 @app.route("/api/download_kb/<filename>")
 def download_kb(filename):
     return send_from_directory(core.data_dir, filename, as_attachment=True)

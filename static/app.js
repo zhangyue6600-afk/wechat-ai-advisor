@@ -136,6 +136,8 @@ async function saveLlmConfig(e) {
 
 let selectedSessions = [];
 let sessionFilter = 'all';
+let isMergeMode = false;
+let mergeSelectedSessions = [];
 
 function setSessionFilter(type, btn) {
   sessionFilter = type;
@@ -167,24 +169,26 @@ async function searchRooms() {
     container.innerHTML = "";
     items.forEach(r => {
       const isSelected = selectedSessions.some(s => s.id === r.id);
+      const isCheckedForMerge = mergeSelectedSessions.some(s => s.id === r.id);
       const isGroup = r.type === "group";
       const icon = isGroup ? "👥" : "👤";
       const typeBadge = `<span class="px-1.5 py-0.5 rounded text-[10px] ${isGroup ? 'bg-indigo-900/60 text-indigo-300 border border-indigo-700/50' : 'bg-emerald-900/60 text-emerald-300 border border-emerald-700/50'}">${r.type_label}</span>`;
       
       const item = document.createElement("div");
-      item.className = "p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 hover:border-indigo-500/50 hover:bg-slate-800/40 transition flex items-center justify-between";
+      item.className = `p-3 rounded-xl bg-slate-950/60 border ${isCheckedForMerge ? 'border-purple-500/80 bg-purple-950/20' : 'border-slate-800/80'} hover:border-indigo-500/50 hover:bg-slate-800/40 transition flex items-center justify-between`;
       
       const addBtnText = isSelected ? "已在监听池" : "+ 加入监听";
       const addBtnClass = isSelected ? "bg-slate-800 text-slate-500 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-500 text-white";
       
       const extraActions = `
         <button onclick="selectRoomForKB('${r.id}', '${escapeHtml(r.display_name)}')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs transition border border-slate-700 flex items-center space-x-1">
-          <span>📚 提炼知识库</span>
+          <span>📚 单群提炼</span>
         </button>
       `;
       
       item.innerHTML = `
         <div class="flex items-center space-x-3 flex-1 min-w-0 pr-3">
+          <input type="checkbox" onchange="toggleMergeSession(${JSON.stringify(r).replace(/"/g, '&quot;')}, this.checked)" class="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 bg-slate-900 border-slate-700 cursor-pointer" ${isCheckedForMerge ? 'checked' : ''} title="勾选加入合并知识库">
           <div class="w-8 h-8 rounded-lg bg-slate-900 border border-slate-700 flex items-center justify-center text-sm flex-shrink-0">${icon}</div>
           <div class="min-w-0">
             <div class="flex items-center space-x-2">
@@ -265,7 +269,81 @@ function renderSelectedPool() {
   document.getElementById("monitor-target-name").innerText = summary;
 }
 
+function toggleMergeSession(session, isChecked) {
+  const idx = mergeSelectedSessions.findIndex(s => s.id === session.id);
+  if (isChecked) {
+    if (idx < 0) {
+      mergeSelectedSessions.push({
+        id: session.id,
+        name: session.display_name,
+        type: session.type,
+        label: session.type_label
+      });
+    }
+  } else {
+    if (idx >= 0) {
+      mergeSelectedSessions.splice(idx, 1);
+    }
+  }
+  updateMergeButtonState();
+}
+
+function updateMergeButtonState() {
+  const btn = document.getElementById("btn-merged-kb-entry");
+  const countEl = document.getElementById("merge-selected-count");
+  if (countEl) countEl.innerText = mergeSelectedSessions.length;
+  if (btn) {
+    btn.disabled = mergeSelectedSessions.length < 2;
+  }
+}
+
+async function prepareMergedKBExport() {
+  if (mergeSelectedSessions.length < 2) {
+    alert("请至少勾选 2 个群聊或私聊会话后再进行合并提炼！");
+    return;
+  }
+  isMergeMode = true;
+  switchTab("step3");
+  
+  // 更新 Step 3 界面显示
+  document.getElementById("step3-heading").innerText = `合并提炼综合知识库 (${mergeSelectedSessions.length} 个会话)`;
+  document.getElementById("step3-desc").innerText = `已选取: ${mergeSelectedSessions.map(s => s.name).join('、')}。将归并多群历史聊天记录并按时间轴去重排版。`;
+  
+  const mergeTitleBox = document.getElementById("merge-title-container");
+  if (mergeTitleBox) {
+    mergeTitleBox.classList.remove("hidden");
+    const defaultTitle = mergeSelectedSessions[0].name.replace(/[0-9]+.*$/, '') + "_综合技术知识库";
+    document.getElementById("merge-custom-title").value = defaultTitle.trim() || "多群合并综合技术知识库";
+  }
+  
+  // 汇总扫描信息
+  document.getElementById("scan-msg-count").innerText = "汇总中...";
+  document.getElementById("scan-start-time").innerText = "计算中...";
+  document.getElementById("scan-end-time").innerText = "计算中...";
+  
+  try {
+    const res = await fetch("/api/sessions/summary", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessions: mergeSelectedSessions })
+    });
+    const data = await res.json();
+    document.getElementById("scan-msg-count").innerText = data.total_messages.toLocaleString() + " 条 (多群合计)";
+    document.getElementById("scan-start-time").innerText = data.start_time;
+    document.getElementById("scan-end-time").innerText = data.end_time;
+  } catch (err) {
+    document.getElementById("scan-msg-count").innerText = "计算完成";
+  }
+}
+
 function selectRoomForKB(roomId, roomName) {
+  isMergeMode = false;
+  const mergeTitleBox = document.getElementById("merge-title-container");
+  if (mergeTitleBox) mergeTitleBox.classList.add("hidden");
+  
+  document.getElementById("step3-heading").innerText = "扫描会话历史记录（群聊 / 私聊均支持）";
+  document.getElementById("step3-desc").innerText = "基于 Windows 底层只读文件映射，统计该群聊或好友私聊在本地的完整发言规模与时间分布：";
+  
   currentSelectedRoom = { id: roomId, name: roomName };
   switchTab("step3");
   scanCurrentRoom(roomId);
@@ -316,43 +394,106 @@ function setExportDays(days, btn) {
   btn.classList.add("active");
 }
 
-async function startExportKB() {
-  if (!currentSelectedRoom) {
-    alert("请先在第 2 步选定群聊！");
-    switchTab("step2");
-    return;
+let distillPollTimer = null;
+
+async function handleStartExport() {
+  if (isMergeMode) {
+    if (mergeSelectedSessions.length < 2) {
+      alert("请至少勾选 2 个群聊或私聊会话！");
+      return;
+    }
+  } else {
+    if (!currentSelectedRoom) {
+      alert("请先在第 2 步选定群聊或联系人！");
+      switchTab("step2");
+      return;
+    }
   }
   
   const btn = document.getElementById("btn-export-kb");
   const spin = document.getElementById("export-spin");
+  const deepDistill = document.getElementById("cfg-deep-distill") ? document.getElementById("cfg-deep-distill").checked : true;
+  const progressCard = document.getElementById("distill-progress-card");
+  const progressBar = document.getElementById("distill-progress-bar");
+  const progressText = document.getElementById("distill-progress-text");
+  const progressPercent = document.getElementById("distill-progress-percent");
+
   btn.disabled = true;
   spin.classList.remove("hidden");
-  
+  if (deepDistill && progressCard) {
+    progressCard.classList.remove("hidden");
+    progressBar.style.width = "0%";
+    progressPercent.innerText = "0%";
+    progressText.innerText = "正在读取并去噪聊天记录...";
+  }
+
+  // 轮询蒸馏进度
+  if (deepDistill) {
+    if (distillPollTimer) clearInterval(distillPollTimer);
+    distillPollTimer = setInterval(async () => {
+      try {
+        const pRes = await fetch("/api/distill/progress");
+        const pData = await pRes.json();
+        if (pData) {
+          if (progressPercent) progressPercent.innerText = `${pData.percent}%`;
+          if (progressBar) progressBar.style.width = `${pData.percent}%`;
+          if (progressText) progressText.innerText = pData.message || "大模型提炼中...";
+        }
+      } catch (e) {}
+    }, 1200);
+  }
+
   try {
-    const res = await fetch("/api/room/export", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    let endpoint = "/api/room/export";
+    let bodyPayload = {};
+    
+    if (isMergeMode) {
+      endpoint = "/api/sessions/merge_export";
+      const customTitle = document.getElementById("merge-custom-title").value.trim() || "多群合并综合技术知识库";
+      bodyPayload = {
+        sessions: mergeSelectedSessions,
+        merged_title: customTitle,
+        days_limit: currentExportDays,
+        deep_distill: deepDistill
+      };
+    } else {
+      bodyPayload = {
         room_id: currentSelectedRoom.id,
         room_name: currentSelectedRoom.name,
-        days_limit: currentExportDays
-      })
+        days_limit: currentExportDays,
+        deep_distill: deepDistill
+      };
+    }
+
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bodyPayload)
     });
     const data = await res.json();
     if (res.ok) {
+      if (progressPercent) progressPercent.innerText = "100%";
+      if (progressBar) progressBar.style.width = "100%";
+      if (progressText) progressText.innerText = "提炼与构建完成！";
+
+      const summaryPrefix = isMergeMode ? `【多群综合技术知识库】已生成！` : `知识库提炼完成！`;
+      const qaInfo = data.distilled_qa_count ? `，并由大模型提炼出 ${data.distilled_qa_count} 组高价值技术 Q&A 避坑问答对与排错手册` : "";
       document.getElementById("kb-summary-text").innerText = 
-        `共提取 ${data.total_exported.toLocaleString()} 条有效交流记录，已打包生成双层标准知识库（含 Agent Prompt、专题指南与结构化数据）。`;
+        `${summaryPrefix} 共归并 ${data.total_exported.toLocaleString()} 条有效技术交流${qaInfo}，已打包生成双层标准知识库。`;
       const dlBtn = document.getElementById("btn-download-zip");
       dlBtn.href = data.download_url;
       dlBtn.download = data.zip_filename;
       
-      switchTab("step4");
+      setTimeout(() => {
+        switchTab("step4");
+      }, 800);
     } else {
-      alert("导出失败: " + (data.error || "未知错误"));
+      alert("提炼导出失败: " + (data.error || "未知错误"));
     }
   } catch (err) {
-    alert("导出异常: " + err.message);
+    alert("提炼异常: " + err.message);
   } finally {
+    if (distillPollTimer) clearInterval(distillPollTimer);
     btn.disabled = false;
     spin.classList.add("hidden");
   }
