@@ -322,15 +322,25 @@ async function prepareMergedKBExport() {
   document.getElementById("scan-end-time").innerText = "计算中...";
   
   try {
-    const res = await fetch("/api/sessions/summary", {
+    const res = await fetch("/api/merge/scan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessions: mergeSelectedSessions })
     });
     const data = await res.json();
-    document.getElementById("scan-msg-count").innerText = data.total_messages.toLocaleString() + " 条 (多群合计)";
-    document.getElementById("scan-start-time").innerText = data.start_time;
-    document.getElementById("scan-end-time").innerText = data.end_time;
+    document.getElementById("scan-msg-count").innerText = (data.total_messages || 0).toLocaleString() + " 条 (多群合计)";
+    
+    // 寻找最早和最晚记录时间
+    let earliest = null;
+    let latest = null;
+    if (data.details && data.details.length > 0) {
+      for (const d of data.details) {
+        if (d.earliest_time && (!earliest || d.earliest_time < earliest)) earliest = d.earliest_time;
+        if (d.latest_time && (!latest || d.latest_time > latest)) latest = d.latest_time;
+      }
+    }
+    document.getElementById("scan-start-time").innerText = earliest || "暂无记录";
+    document.getElementById("scan-end-time").innerText = latest || "暂无记录";
   } catch (err) {
     document.getElementById("scan-msg-count").innerText = "计算完成";
   }
@@ -440,11 +450,11 @@ async function handleStartExport() {
     let bodyPayload = {};
     
     if (isMergeMode) {
-      endpoint = "/api/sessions/merge_export";
+      endpoint = "/api/merge/export";
       const customTitle = document.getElementById("merge-custom-title").value.trim() || "多群合并综合技术知识库";
       bodyPayload = {
         sessions: mergeSelectedSessions,
-        merged_title: customTitle,
+        kb_title: customTitle,
         days_limit: currentExportDays,
         deep_distill: deepDistill
       };

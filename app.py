@@ -51,6 +51,13 @@ def manage_config():
             "temperature": temp
         })
         return jsonify({"status": "success", "message": "配置已保存", "test_msg": test_msg})
+    
+    cfg = dict(core.llm_config)
+    if cfg.get("api_key"):
+        # 脱敏展示
+        k = cfg["api_key"]
+        cfg["masked_key"] = k[:6] + "******" + k[-4:] if len(k) > 10 else "******"
+    return jsonify(cfg)
 
 @app.route("/api/models", methods=["POST"])
 def get_models():
@@ -59,13 +66,6 @@ def get_models():
     api_key = data.get("api_key", "").strip()
     models = core.fetch_available_models(api_url, api_key)
     return jsonify({"status": "success", "models": models})
-        
-    cfg = dict(core.llm_config)
-    if cfg.get("api_key"):
-        # 脱敏展示
-        k = cfg["api_key"]
-        cfg["masked_key"] = k[:6] + "******" + k[-4:] if len(k) > 10 else "******"
-    return jsonify(cfg)
 
 @app.route("/api/chatrooms", methods=["GET"])
 def get_chatrooms():
