@@ -361,15 +361,7 @@ function startMultiMonitorFromStep2() {
 }
 
 function selectRoom(roomId, roomName) {
-  currentSelectedRoom = { id: roomId, name: roomName };
-  document.getElementById("selected-room-name").innerText = roomName;
-  document.getElementById("selected-room-id").innerText = roomId;
-  document.getElementById("selected-room-banner").classList.remove("hidden");
-  document.getElementById("monitor-target-name").innerText = roomName;
-  
-  // 自动切换并触发扫描
-  switchTab("step3");
-  scanCurrentRoom(roomId);
+  selectRoomForKB(roomId, roomName);
 }
 
 async function scanCurrentRoom(roomId) {
@@ -691,8 +683,11 @@ function selectSessionTab(sessionId) {
     // 智能聚焦剪贴板：切换到该会话时，若开启了剪贴板同步且该会话有最新建议，自动无缝写入剪切板
     const enableClipboard = document.getElementById("chk-clipboard")?.checked;
     if (enableClipboard && sessionLatestAdvices[sessionId]) {
+      const advText = sessionLatestAdvices[sessionId];
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(sessionLatestAdvices[sessionId]).catch(() => {});
+        navigator.clipboard.writeText(advText).catch(() => { fallbackCopyText(advText); });
+      } else {
+        fallbackCopyText(advText);
       }
     }
   }
@@ -800,7 +795,9 @@ function renderIncomingEvent(ev) {
     if (enableClipboard) {
       if (currentActiveSessionId === "__ALL__" || currentActiveSessionId === sid) {
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(ev.advice).catch(() => {});
+          navigator.clipboard.writeText(ev.advice).catch(() => { fallbackCopyText(ev.advice); });
+        } else {
+          fallbackCopyText(ev.advice);
         }
       }
     }
@@ -919,13 +916,30 @@ function copyAdviceText(btn, cardId) {
   if (!text) return;
   
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).catch(() => {});
+    navigator.clipboard.writeText(text).catch(() => {
+      fallbackCopyText(text);
+    });
+  } else {
+    fallbackCopyText(text);
   }
   if (btn) {
     const orig = btn.innerHTML;
     btn.innerHTML = `<span>✅ 已复制！</span>`;
     setTimeout(() => { btn.innerHTML = orig; }, 2000);
   }
+}
+
+function fallbackCopyText(text) {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  } catch (e) {}
 }
 
 function escapeHtml(str) {
