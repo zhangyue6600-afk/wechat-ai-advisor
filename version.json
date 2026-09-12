@@ -1,10 +1,12 @@
 {
-  "version": "1.6.2",
+  "version": "1.6.3",
   "build_date": "2026-09-12",
   "name": "微信群 AI 军师 · WeChat-AI-Advisor",
   "changelog": [
-    "【v1.6.2 修复大模型异步蒸馏完成回调】",
-    "1. 修复：彻底解决大模型后台深度蒸馏时前端未等待轮询直接触发 toLocaleString 报错的 Bug",
-    "2. 优化：深度蒸馏模式下进度条（0%~100%）实时精准刷新，直到蒸馏完毕才平滑过渡到 Step 4"
+    "【v1.6.3 核心体验重大升级 - 深度技术卡片与问答修复】",
+    "1. 修复：彻底修复 call_llm_advice 中 UnboundLocalError 导致每次只能输出单行兜底回复的严重 Bug，现已全面恢复超高含金量的深度架构师建议卡片（含诊断、排查参数与快捷草稿）",
+    "2. 修复：彻底修复知识库主动问答提示 formatAdviceMarkdown is not defined 的前端异常，完整支持 Markdown、加粗与代码块渲染",
+    "3. 修复：修复重新生成建议时 sender 类型不兼容导致的 AttributeError",
+    "4. 优化：动态智能检索全部本地知识库与综合技术库，权重与命中率大幅提升"
   ]
 }

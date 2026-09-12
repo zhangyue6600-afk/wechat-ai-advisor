@@ -248,8 +248,8 @@ def monitor_status():
 def regenerate_advice():
     """重新生成回复建议"""
     data = request.json or {}
-    content = data.get("content", "").strip()
-    sender = data.get("sender", "群友").strip()
+    content = str(data.get("content", "")).strip()
+    sender = str(data.get("sender", "群友")).strip()
     sname = data.get("session_name", "")
     stype = data.get("session_type", "group")
     if not content:

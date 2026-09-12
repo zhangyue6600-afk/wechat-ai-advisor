@@ -910,7 +910,7 @@ function renderIncomingEvent(ev) {
           <span>💡 建议回复:</span>
           ${clipboardHint}
         </span>
-        <div class="advice-text whitespace-pre-wrap">${escapeHtml(ev.advice)}</div>
+        <div class="advice-text leading-relaxed">${formatAdviceMarkdown(ev.advice)}</div>
       </div>
       <div class="flex items-center justify-end space-x-2 pt-1">
         <button onclick="regenerateCardAdvice(this, '${cardId}')" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-medium transition flex items-center space-x-1 border border-slate-700">
@@ -1223,4 +1223,20 @@ function copyRawText(btn, text) {
     btn.innerText = "✓ 已复制";
     setTimeout(() => { btn.innerText = orig; }, 1800);
   }
+}
+
+function formatAdviceMarkdown(text) {
+  if (!text) return "";
+  let html = escapeHtml(text);
+  // 加粗 **bold**
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  // 代码块 ```code```
+  html = html.replace(/```([\s\S]*?)```/g, '<pre class="bg-slate-950 p-2.5 rounded-lg text-[11px] my-1.5 overflow-x-auto border border-slate-700/60 font-mono text-slate-200"><code>$1</code></pre>');
+  // 行内代码 `code`
+  html = html.replace(/`([^`]+)`/g, '<code class="bg-slate-900 px-1 py-0.5 rounded text-[11px] text-indigo-300 font-mono">$1</code>');
+  // 列表
+  html = html.replace(/^[\*\-] (.*)$/gm, '<div class="ml-2 pl-2 border-l-2 border-indigo-500/40 my-0.5">• $1</div>');
+  // 换行
+  html = html.replace(/\n/g, '<br/>');
+  return html;
 }

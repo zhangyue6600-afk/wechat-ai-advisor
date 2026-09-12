@@ -625,12 +625,10 @@ class WeChatAdvisorCore:
         if not api_url:
             return ""
 
-        clean_key = api_key if api_key else "EMPTY"
         proxies = {"http": None, "https": None} if is_private_ip(api_url) else None
-        headers = {
-            "Authorization": f"Bearer {clean_key}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         system_prompt = (
             "你是一名资深的大模型推理系统架构师和技术专家。\n"
             "以下是一段从多个技术群中提取的真实聊天记录切片。请对其中的技术交流内容进行高浓度信息提炼与蒸馏：\n"
@@ -882,11 +880,17 @@ class WeChatAdvisorCore:
         api_key = self.llm_config.get("api_key", "").strip()
         model = self.llm_config.get("model", "deepseek-chat").strip()
         
-        # 1. 本地知识库高权重匹配
+        # 1. 本地知识库高权重智能检索 (自动检索当前会话库与综合知识库)
         kb_info = ""
-        if session_type == "group":
-            kb_dir = os.path.join(os.path.dirname(self.data_dir), "vLLM_学术交流知识库")
-            kb_info = search_local_kb(question, kb_dir)
+        if os.path.exists(self.data_dir):
+            for d in os.listdir(self.data_dir):
+                full_d = os.path.join(self.data_dir, d)
+                if os.path.isdir(full_d) and (d.endswith("_AI知识库") or "知识库" in d):
+                    kb_part = search_local_kb(question, full_d, max_chars=800)
+                    if kb_part:
+                        kb_info += f"\n{kb_part}\n"
+                        if len(kb_info) >= 1200:
+                            break
         
         # 2. 联网搜索兜底补充
         web_info = ""
@@ -895,39 +899,46 @@ class WeChatAdvisorCore:
             
         if session_type == "private":
             system_prompt = (
-                f"你是微信私聊中针对好友「{session_name or sender}」的专属高情商智囊。\n"
-                "对方刚刚发来了一条消息。请给用户提供一段【高情商、真诚、得体、自然接地气】的微信回复草稿。\n"
+                f"你是微信私聊中针对好友「{session_name or sender}」的专属高情商智囊与谋士。\n"
+                "对方刚刚发来了一条消息。请给用户提供客观、通透的情商分析，并附上拿来即用的回复草稿。\n"
                 "【强制语言准则】：\n"
-                "1. 全程必须使用纯正自然的简体中文，严禁使用任何英文！\n"
-                "2. 严禁客服腔，不写“您好”、“祝您生活愉快”等废话；\n"
-                "3. 直接输出1到2句微信聊天内容，不加引号、不写分析理由、不要分点列出多种选项，让用户能直接复制发送！"
+                "1. 全程必须使用纯正自然的简体中文，严禁客服腔和机械客套话；\n"
+                "2. 请采用结构化格式输出：\n"
+                "   - 💡【情商分析】：洞察对方潜台词、情绪或核心诉求；\n"
+                "   - 💬【推荐微信回复草稿】：给出1-2句最得体、自然接地气的回复，方便直接发送。"
             )
-            user_prompt = f"微信好友「{session_name or sender}」私聊对我说：\n“{question}”\n请直接输出1到2句自然真诚的中文回复草稿："
+            user_prompt = f"微信好友「{session_name or sender}」私聊对我说：\n“{question}”\n"
+            if kb_info:
+                user_prompt += f"\n【好友背景与过往聊天知识库】：\n{kb_info}\n"
+            user_prompt += "\n请给出你的高情商回复建议与草稿："
         else:
             system_prompt = (
-                f"你是微信群「{session_name or '技术交流群'}」的常驻技术军师与资深大模型推理架构师。\n"
-                "当监测到群友发言或讨论时，你的任务是给用户提供一段【极具内行感、客观专业、切中要害】的回复建议，帮用户树立技术大牛人设。\n"
-                "【强制语言与知识准则】：\n"
-                "1. 全程必须使用纯正地道的简体中文，严禁输出任何英文思维链或分析！\n"
-                "2. 优先结合【群内真实沉淀知识与实测经验】（权重最高，群内共识最受认可）；\n"
-                "3. 若涉及群外新事件、新产品或知识盲区，结合【联网搜索资料】进行专业补充；\n"
-                "4. 语言风格：必须符合技术群真实老玩家/架构师口吻（言简意赅、自然、直奔底层要害、带具体排查点或参数）；\n"
-                "5. 严禁客服腔和机械八股文，直接输出100-200字以内的精炼回复，方便直接发群。"
+                f"你是微信技术交流群「{session_name or '开源技术交流群'}」的常驻技术军师与资深大模型推理架构师。\n"
+                "当监测到群友发言或报错求助时，你的任务是提供一段【有深度、切中底层要害、专业权威】的解答卡片。\n"
+                "【强制知识与表达准则】：\n"
+                "1. 全程必须使用纯正地道的简体中文，严禁输出任何英文思维链或机械客套！\n"
+                "2. 深度检索群内真实踩坑经验与知识库（权重最高，必须结合群内共识）；\n"
+                "3. 严禁只回复干瘪的一句话！必须结构化、有理有据，包含分析和具体操作命令；\n"
+                "4. 建议按以下清晰架构输出：\n"
+                "   - 💡【问题根因与诊断】：直击技术瓶颈（如显存带宽、NCCL通信阻塞、CUDA算力、量化精度等）；\n"
+                "   - 🛠️【排查与调优方案】：给出具体排查步骤、参数配置（如 --tensor-parallel-size、--gpu-memory-utilization）或避坑实测经验；\n"
+                "   - 💬【群聊快捷回复草稿】：提炼出一句最接地气、内行的大牛风格发言，方便直接发群装逼或解答。"
             )
             user_prompt = f"群内发言人【{sender}】说：\n“{question}”\n"
             if kb_info:
                 user_prompt += f"\n【群内过往沉淀实测经验（最高权重依据）】：\n{kb_info}\n"
             if web_info:
                 user_prompt += f"\n【联网最新搜索补充参考】：\n{web_info}\n"
-            user_prompt += "\n请直接给出你的高逼格专业中文回复建议："
+            user_prompt += "\n请直接给出你的深度架构师建议卡片内容："
         
-        clean_key = api_key if api_key else "EMPTY"
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         proxies = {"http": None, "https": None} if is_private_ip(api_url) else None
         
         if api_url:
             try:
                 url = api_url.rstrip("/") + "/chat/completions"
-                headers = {"Authorization": f"Bearer {clean_key}", "Content-Type": "application/json"}
                 temp = float(self.llm_config.get("temperature", 0.7))
                 if force_creative:
                     temp = min(1.0, temp + 0.25)
@@ -938,7 +949,7 @@ class WeChatAdvisorCore:
                         {"role": "user", "content": user_prompt}
                     ],
                     "temperature": temp,
-                    "max_tokens": 600
+                    "max_tokens": 1200
                 }
                 resp = requests.post(url, headers=headers, json=payload, timeout=25, proxies=proxies)
                 if resp.status_code == 200:
@@ -953,7 +964,6 @@ class WeChatAdvisorCore:
                         ans = content
                     elif reasoning:
                         # 如果 content 为空只有 reasoning，且为中文，尝试提取中文文本，绝不能返回英文思维链！
-                        import re
                         ch_chars = re.findall(r"[一-龥]", reasoning)
                         if len(ch_chars) >= 15:
                             quotes = re.findall(r'["\u201c\u201d\u300c\u300d]([^"\u201c\u201d\u300c\u300d]+)["\u201c\u201d\u300c\u300d]', reasoning)
@@ -1184,13 +1194,51 @@ class WeChatAdvisorCore:
         
         user_prompt = f"【本地知识库参考内容】:\n{kb_info if kb_info else '（当前暂未检索到直接相关的群聊原记录）'}\n\n【用户问题】:\n{q}\n\n请给出专业深入的解答："
         
-        answer = self.call_llm_advice(user_prompt, system_prompt)
+        answer = self._query_llm_direct(system_prompt, user_prompt)
         return {
             "query": q,
             "answer": answer,
             "has_kb_reference": bool(kb_info),
             "kb_folder": os.path.basename(kb_dir) if kb_dir else ""
         }
+
+    def _query_llm_direct(self, system_prompt: str, user_prompt: str, max_tokens: int = 1500) -> str:
+        api_url = self.llm_config.get("api_url", "").strip()
+        api_key = self.llm_config.get("api_key", "").strip()
+        model = self.llm_config.get("model", "deepseek-chat").strip()
+        if not api_url:
+            return "未配置大模型接口地址，请在 Step 1 中配置并保存模型参数。"
+        
+        proxies = {"http": None, "https": None} if is_private_ip(api_url) else None
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        try:
+            url = api_url.rstrip("/") + "/chat/completions"
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "temperature": 0.6,
+                "max_tokens": max_tokens
+            }
+            resp = requests.post(url, headers=headers, json=payload, timeout=35, proxies=proxies)
+            if resp.status_code == 200:
+                data = resp.json()
+                choices = data.get("choices", [])
+                if choices:
+                    msg = choices[0].get("message", {})
+                    content = (msg.get("content") or "").strip()
+                    reasoning = (msg.get("reasoning") or msg.get("reasoning_content") or "").strip()
+                    if content:
+                        return content
+                    if reasoning:
+                        return reasoning
+            return f"大模型响应异常 (HTTP {resp.status_code}): {resp.text[:200]}"
+        except Exception as e:
+            return f"请求大模型服务异常: {e}"
 
     def incremental_sync_kb(self, kb_folder_name: str) -> dict:
         """知识库一键增量更新：仅拉取上次构建之后的新增记录"""
