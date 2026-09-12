@@ -188,6 +188,7 @@ class WeChatAdvisorCore:
         self.monitored_room_name = None
         self.event_subscribers = []
         self.recent_events = []
+        self._nickname_cache = {}
         self.distillation_progress = {
             "is_running": False,
             "status": "idle",
@@ -227,6 +228,20 @@ class WeChatAdvisorCore:
             return True, f"已连接微信数据库: {self.db.account_dir}"
         except Exception as e:
             return False, f"未检测到运行中的微信或无法获取密钥: {e}"
+
+    def get_cached_nickname(self, user: str) -> str:
+        if not user:
+            return ""
+        if user in self._nickname_cache:
+            return self._nickname_cache[user]
+        nick = str(user)
+        try:
+            if self.db:
+                nick = self.db.get_nickname(user) or str(user)
+        except Exception:
+            nick = str(user)
+        self._nickname_cache[user] = nick
+        return nick
 
     def check_wechat_status(self) -> dict:
         if self.db is None:
@@ -420,7 +435,11 @@ class WeChatAdvisorCore:
                     FROM {target} WHERE create_time >= ? ORDER BY sort_seq ASC
                 """
                 cur.execute(query, (min_ctime,))
+                count = 0
                 for r in cur.fetchall():
+                    count += 1
+                    if count % 3000 == 0:
+                        self.distillation_progress["message"] = f"正在极速解密读取 [{room_name}] 聊天流水: 已提取 {len(records)} 条..."
                     lid, ltype, sid, ctime, mcontent = r
                     body = parse_real_content(mcontent)
                     if not body or "拍了拍" in body:
@@ -431,7 +450,7 @@ class WeChatAdvisorCore:
                         else:
                             sender_nick = room_name
                     else:
-                        sender_nick = self.db.get_nickname(sid) or str(sid)
+                        sender_nick = self.get_cached_nickname(sid) or str(sid)
                     records.append({
                         "id": lid,
                         "time": ctime,
@@ -480,7 +499,7 @@ class WeChatAdvisorCore:
                         else:
                             sender_nick = room_name
                     else:
-                        sender_nick = self.db.get_nickname(sid) or str(sid)
+                        sender_nick = self.get_cached_nickname(sid) or str(sid)
                     all_records.append({
                         "id": lid,
                         "time": ctime,
@@ -637,7 +656,7 @@ class WeChatAdvisorCore:
         }
         try:
             target_url = api_url.rstrip("/") + "/chat/completions"
-            resp = requests.post(target_url, headers=headers, json=payload, timeout=60, proxies=proxies)
+            resp = requests.post(target_url, headers=headers, json=payload, timeout=30, proxies=proxies)
             if resp.status_code == 200:
                 data = resp.json()
                 msg = data["choices"][0]["message"]
@@ -669,45 +688,29 @@ class WeChatAdvisorCore:
         all_records = []
         source_names = []
 
-        for s in sessions:
+        total_sessions = len(sessions)
+        for s_idx, s in enumerate(sessions, 1):
             rid = s.get("room_id") or s.get("id")
             rname = s.get("room_name") or s.get("name") or rid
             if not rid:
                 continue
             source_names.append(rname)
-            target = "Msg_" + _md5_hex(rid.encode())
-            is_private = not rid.endswith("@chatroom")
-
-            for rel in self.db._message_dbs():
-                try:
-                    conn = self.db._open(rel)
-                    cur = conn.cursor()
-                    query = f"""
-                        SELECT local_id, local_type, real_sender_id, create_time, message_content
-                        FROM {target} WHERE create_time >= ? ORDER BY sort_seq ASC
-                    """
-                    cur.execute(query, (min_ctime,))
-                    for r in cur.fetchall():
-                        lid, ltype, sid, ctime, mcontent = r
-                        body = parse_real_content(mcontent)
-                        if not body or "拍了拍" in body:
-                            continue
-                        if is_private:
-                            sender_nick = "我" if sid in (2, 0, 15) else rname
-                        else:
-                            sender_nick = self.db.get_nickname(sid) or str(sid)
-                        
-                        dt = datetime.datetime.fromtimestamp(ctime).strftime("%Y-%m-%d %H:%M:%S")
-                        all_records.append({
-                            "session_id": rid,
-                            "source_name": rname,
-                            "timestamp": ctime,
-                            "time_str": dt,
-                            "sender": sender_nick,
-                            "content": body
-                        })
-                except Exception:
-                    continue
+            
+            self.distillation_progress["is_running"] = True
+            self.distillation_progress["status"] = "reading"
+            self.distillation_progress["percent"] = int((s_idx / (total_sessions + 1)) * 25)
+            self.distillation_progress["message"] = f"正在极速读取会话 [{rname}] ({s_idx}/{total_sessions})..."
+            
+            sub_records = self.fetch_room_messages(rid, rname, min_ctime)
+            for item in sub_records:
+                all_records.append({
+                    "session_id": rid,
+                    "source_name": rname,
+                    "timestamp": item.get("time") or item.get("timestamp") or 0,
+                    "time_str": item.get("datetime") or "",
+                    "sender": item.get("sender") or "",
+                    "content": item.get("content") or ""
+                })
 
         # 按毫秒时间戳进行全局排序
         all_records.sort(key=lambda x: x["timestamp"])
@@ -752,15 +755,18 @@ class WeChatAdvisorCore:
             if curr_chunk:
                 chunks.append(curr_chunk)
 
-            total_chunks = min(len(chunks), 40)  # 精选最多 40 个技术讨论窗口
+            # 精选最新的 10 个核心技术窗口（价值最高且速度最快）
+            selected_chunks = chunks[-10:] if len(chunks) > 10 else chunks
+            total_chunks = len(selected_chunks)
             if total_chunks > 0:
                 self.distillation_progress["total"] = total_chunks
                 self.distillation_progress["is_running"] = True
                 self.distillation_progress["status"] = "distilling"
 
-                for idx, c in enumerate(chunks[:total_chunks]):
+                for idx, c in enumerate(selected_chunks):
+                    p_val = 25 + int(((idx + 1) / total_chunks) * 70)
                     self.distillation_progress["current"] = idx + 1
-                    self.distillation_progress["percent"] = int(((idx + 1) / total_chunks) * 100)
+                    self.distillation_progress["percent"] = p_val
                     self.distillation_progress["message"] = f"正在让大模型深度蒸馏第 {idx + 1}/{total_chunks} 个技术交流切片..."
 
                     chunk_text = "\n".join([f"[{m['source_name']}] {m['sender']}: {m['content']}" for m in c])
