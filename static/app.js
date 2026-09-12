@@ -1,3 +1,43 @@
+
+function finishExportSuccess(data) {
+  const progressPercent = document.getElementById("export-progress-percent");
+  const progressBar = document.getElementById("export-progress-bar");
+  const progressText = document.getElementById("export-progress-text");
+  const btn = document.getElementById("btn-export-kb");
+  const spin = document.getElementById("export-spinner");
+
+  if (progressPercent) progressPercent.innerText = "100%";
+  if (progressBar) progressBar.style.width = "100%";
+  if (progressText) progressText.innerText = "提炼与构建完成！";
+
+  const totalCount = data.total_exported || 0;
+  const qaCount = data.distilled_count || 0;
+  const summaryPrefix = isMergeMode ? `【多群综合技术知识库】已生成！` : `知识库提炼完成！`;
+  const qaInfo = qaCount ? `，并由大模型提炼出 ${qaCount} 组高价值技术 Q&A 避坑问答对与排错手册` : "";
+  
+  const summaryEl = document.getElementById("kb-summary-text");
+  if (summaryEl) {
+    summaryEl.innerText = `${summaryPrefix} 共归并 ${totalCount.toLocaleString()} 条有效技术交流${qaInfo}，已打包生成双层标准知识库。`;
+  }
+  
+  const dlBtn = document.getElementById("btn-download-zip");
+  if (dlBtn) {
+    dlBtn.href = data.download_url || "#";
+    dlBtn.download = data.zip_filename || "AI知识库.zip";
+  }
+
+  if (typeof loadKnowledgeBaseList === "function") {
+    loadKnowledgeBaseList();
+  }
+
+  if (btn) btn.disabled = false;
+  if (spin) spin.classList.add("hidden");
+
+  setTimeout(() => {
+    switchTab("step4");
+  }, 1200);
+}
+
 /**
  * WeChat-AI-Advisor 前端交互主脚本
  */
@@ -454,6 +494,10 @@ async function handleStartExport() {
           if (progressPercent) progressPercent.innerText = `${pData.percent}%`;
           if (progressBar) progressBar.style.width = `${pData.percent}%`;
           if (progressText) progressText.innerText = pData.message || "大模型提炼中...";
+          if (pData.status === "completed" && pData.result) {
+            clearInterval(distillPollTimer);
+            finishExportSuccess(pData.result);
+          }
         }
       } catch (e) {}
     }, 1200);
@@ -488,28 +532,21 @@ async function handleStartExport() {
     });
     const data = await res.json();
     if (res.ok) {
-      if (progressPercent) progressPercent.innerText = "100%";
-      if (progressBar) progressBar.style.width = "100%";
-      if (progressText) progressText.innerText = "提炼与构建完成！";
-
-      const summaryPrefix = isMergeMode ? `【多群综合技术知识库】已生成！` : `知识库提炼完成！`;
-      const qaInfo = data.distilled_qa_count ? `，并由大模型提炼出 ${data.distilled_qa_count} 组高价值技术 Q&A 避坑问答对与排错手册` : "";
-      document.getElementById("kb-summary-text").innerText = 
-        `${summaryPrefix} 共归并 ${data.total_exported.toLocaleString()} 条有效技术交流${qaInfo}，已打包生成双层标准知识库。`;
-      const dlBtn = document.getElementById("btn-download-zip");
-      dlBtn.href = data.download_url;
-      dlBtn.download = data.zip_filename;
-      
-      setTimeout(() => {
-        switchTab("step4");
-      }, 800);
+      if (data.status === "started") {
+        if (progressText) progressText.innerText = "大模型技术蒸馏正在后台启动...";
+        return; // 保持轮询定时器，不重置按钮
+      }
+      if (distillPollTimer) clearInterval(distillPollTimer);
+      finishExportSuccess(data);
     } else {
-      alert("提炼导出失败: " + (data.error || "未知错误"));
+      if (distillPollTimer) clearInterval(distillPollTimer);
+      alert("提炼导出失败: " + (data.error || data.message || "未知错误"));
+      btn.disabled = false;
+      spin.classList.add("hidden");
     }
   } catch (err) {
-    alert("提炼异常: " + err.message);
-  } finally {
     if (distillPollTimer) clearInterval(distillPollTimer);
+    alert("提炼异常: " + err.message);
     btn.disabled = false;
     spin.classList.add("hidden");
   }

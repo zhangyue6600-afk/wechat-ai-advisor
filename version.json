@@ -1,11 +1,10 @@
 {
-  "version": "1.6.1",
+  "version": "1.6.2",
   "build_date": "2026-09-12",
   "name": "微信群 AI 军师 · WeChat-AI-Advisor",
   "changelog": [
-    "【v1.6.1 关键修复】",
-    "1. 修复：修复 app.py 异步深度蒸馏时缺少 threading 模块引用的 NameError",
-    "2. 修复：补充 /api/distill/progress 别名路由与 0 切片除零保护",
-    "3. 增强：检查并自动更新脚本采用 100% 纯 ASCII 语法，彻底告别 CMD 编码乱码"
+    "【v1.6.2 修复大模型异步蒸馏完成回调】",
+    "1. 修复：彻底解决大模型后台深度蒸馏时前端未等待轮询直接触发 toLocaleString 报错的 Bug",
+    "2. 优化：深度蒸馏模式下进度条（0%~100%）实时精准刷新，直到蒸馏完毕才平滑过渡到 Step 4"
   ]
 }
