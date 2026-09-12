@@ -7,6 +7,7 @@ import sys
 import json
 import queue
 import datetime
+import threading
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
 from core import WeChatAdvisorCore
 
@@ -172,6 +173,7 @@ def export_merged_kb():
         res = core.export_merged_knowledge_base(sessions, kb_title, days_limit=days, deep_distill=False)
         return jsonify(res)
 
+@app.route("/api/distill/progress", methods=["GET"])
 @app.route("/api/merge/progress", methods=["GET"])
 def get_merge_progress():
     return jsonify(core.distillation_progress)

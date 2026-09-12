@@ -753,19 +753,20 @@ class WeChatAdvisorCore:
                 chunks.append(curr_chunk)
 
             total_chunks = min(len(chunks), 40)  # 精选最多 40 个技术讨论窗口
-            self.distillation_progress["total"] = total_chunks
-            self.distillation_progress["is_running"] = True
-            self.distillation_progress["status"] = "distilling"
+            if total_chunks > 0:
+                self.distillation_progress["total"] = total_chunks
+                self.distillation_progress["is_running"] = True
+                self.distillation_progress["status"] = "distilling"
 
-            for idx, c in enumerate(chunks[:total_chunks]):
-                self.distillation_progress["current"] = idx + 1
-                self.distillation_progress["percent"] = int(((idx + 1) / total_chunks) * 100)
-                self.distillation_progress["message"] = f"正在让大模型深度蒸馏第 {idx + 1}/{total_chunks} 个技术交流切片..."
+                for idx, c in enumerate(chunks[:total_chunks]):
+                    self.distillation_progress["current"] = idx + 1
+                    self.distillation_progress["percent"] = int(((idx + 1) / total_chunks) * 100)
+                    self.distillation_progress["message"] = f"正在让大模型深度蒸馏第 {idx + 1}/{total_chunks} 个技术交流切片..."
 
-                chunk_text = "\n".join([f"[{m['source_name']}] {m['sender']}: {m['content']}" for m in c])
-                res = self._call_llm_for_distillation(chunk_text)
-                if res and "无有效技术沉淀" not in res and len(res) > 20:
-                    distilled_qa_list.append(res)
+                    chunk_text = "\n".join([f"[{m['source_name']}] {m['sender']}: {m['content']}" for m in c])
+                    res = self._call_llm_for_distillation(chunk_text)
+                    if res and "无有效技术沉淀" not in res and len(res) > 20:
+                        distilled_qa_list.append(res)
 
             self.distillation_progress["status"] = "completed"
             self.distillation_progress["is_running"] = False
