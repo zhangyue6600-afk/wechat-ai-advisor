@@ -42,6 +42,7 @@ function finishExportSuccess(data) {
  * WeChat-AI-Advisor 前端交互主脚本
  */
 
+let currentTab = "step1";
 let currentSelectedRoom = null;
 let currentExportDays = null;
 let isMonitoring = false;
@@ -1232,8 +1233,8 @@ function copyRawText(btn, text) {
 function extractReplyDraft(fullAdvice) {
   if (!fullAdvice) return "";
   // 匹配 🎯【推荐回复草稿】后面的内容
-  const m = fullAdvice.match(/🎯\s*【推荐回复草稿】[
-]+([\s\S]*?)(?=(---|👤|🔍|🧠|【发言人|【意图|【专家|$))/i);
+  const regex = new RegExp("🎯\\s*【推荐回复草稿】[\\r\\n\\s]+([\\s\\S]*?)(?=(---|👤|🔍|🧠|【发言人|【意图|【专家|$))", "i");
+  const m = fullAdvice.match(regex);
   if (m && m[1]) {
     let draft = m[1].trim();
     draft = draft.replace(/^>\s*/gm, '').trim();
