@@ -848,17 +848,17 @@ function renderIncomingEvent(ev) {
   if (ev.is_question && ev.advice) {
     // 缓存该会话的最新建议
     if (sid) {
-      sessionLatestAdvices[sid] = ev.advice;
+      sessionLatestAdvices[sid] = draftText;
     }
 
-    // 智能聚焦剪贴板控制：仅当当前处于【全部会话】或正好在【当前活跃会话】时，才将建议写入剪贴板
+    // 智能聚焦剪贴板控制：自动将最核心的【回复草稿】同步到剪贴板，方便切回微信秒按 Ctrl+V！
     const enableClipboard = document.getElementById("chk-clipboard")?.checked;
     if (enableClipboard) {
       if (currentActiveSessionId === "__ALL__" || currentActiveSessionId === sid) {
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(ev.advice).catch(() => { fallbackCopyText(ev.advice); });
+          navigator.clipboard.writeText(draftText).catch(() => { fallbackCopyText(draftText); });
         } else {
-          fallbackCopyText(ev.advice);
+          fallbackCopyText(draftText);
         }
       }
     }
@@ -913,11 +913,14 @@ function renderIncomingEvent(ev) {
         <div class="advice-text leading-relaxed">${formatAdviceMarkdown(ev.advice)}</div>
       </div>
       <div class="flex items-center justify-end space-x-2 pt-1">
-        <button onclick="regenerateCardAdvice(this, '${cardId}')" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-medium transition flex items-center space-x-1 border border-slate-700">
+        <button onclick="regenerateCardAdvice(this, '${cardId}')" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-medium transition flex items-center space-x-1 border border-slate-700">
           <span>🔄 重新生成</span>
         </button>
-        <button onclick="copyAdviceText(this, '${cardId}')" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-medium transition flex items-center space-x-1 shadow-md shadow-indigo-600/20">
-          <span>📋 复制内容</span>
+        <button onclick="copyAdviceText(this, '${cardId}', true)" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-medium transition border border-slate-700 flex items-center space-x-1">
+          <span>📄 复制全部研判</span>
+        </button>
+        <button onclick="copyAdviceText(this, '${cardId}', false)" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition flex items-center space-x-1 shadow-md shadow-emerald-600/30">
+          <span>📋 复制回复草稿</span>
         </button>
       </div>
     `;
@@ -969,23 +972,24 @@ async function regenerateCardAdvice(btn, cardId) {
   }
 }
 
-function copyAdviceText(btn, cardId) {
+function copyAdviceText(btn, cardId, copyAll = false) {
   const card = document.getElementById(cardId);
   if (!card) return;
-  const textEl = card.querySelector(".advice-text");
-  const text = textEl ? textEl.innerText : "";
-  if (!text) return;
+  const rawAdvice = cardDataStore[cardId]?.advice || card.querySelector(".advice-text")?.innerText || "";
+  if (!rawAdvice) return;
+  
+  const textToCopy = copyAll ? rawAdvice : extractReplyDraft(rawAdvice);
   
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).catch(() => {
-      fallbackCopyText(text);
+    navigator.clipboard.writeText(textToCopy).catch(() => {
+      fallbackCopyText(textToCopy);
     });
   } else {
-    fallbackCopyText(text);
+    fallbackCopyText(textToCopy);
   }
   if (btn) {
     const orig = btn.innerHTML;
-    btn.innerHTML = `<span>✅ 已复制！</span>`;
+    btn.innerHTML = `<span>✅ 已复制${copyAll ? '全部' : '草稿'}！</span>`;
     setTimeout(() => { btn.innerHTML = orig; }, 2000);
   }
 }
@@ -1223,6 +1227,22 @@ function copyRawText(btn, text) {
     btn.innerText = "✓ 已复制";
     setTimeout(() => { btn.innerText = orig; }, 1800);
   }
+}
+
+function extractReplyDraft(fullAdvice) {
+  if (!fullAdvice) return "";
+  // 匹配 🎯【推荐回复草稿】后面的内容
+  const m = fullAdvice.match(/🎯\s*【推荐回复草稿】[
+]+([\s\S]*?)(?=(---|👤|🔍|🧠|【发言人|【意图|【专家|$))/i);
+  if (m && m[1]) {
+    let draft = m[1].trim();
+    draft = draft.replace(/^>\s*/gm, '').trim();
+    if ((draft.startsWith('“') && draft.endsWith('”')) || (draft.startsWith('"') && draft.endsWith('"'))) {
+      draft = draft.substring(1, draft.length - 1).trim();
+    }
+    return draft || fullAdvice;
+  }
+  return fullAdvice;
 }
 
 function formatAdviceMarkdown(text) {

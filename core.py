@@ -964,6 +964,32 @@ class WeChatAdvisorCore:
             return True, "群聊交流/观点发表"
         return False, "日常简短寒暄"
 
+    def get_sender_history(self, sender: str, max_msgs: int = 6) -> str:
+        """从知识库中提取该发言人的历史发言与被提及记录，还原其真实画像与近期动向"""
+        if not sender or sender in ("群友", "我", "系统消息"):
+            return ""
+        history = []
+        target = sender.lower()
+        import glob
+        for jf in glob.glob(os.path.join(self.data_dir, "**", "02_结构化数据_JSONL", "*.jsonl"), recursive=True):
+            try:
+                with open(jf, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if target in line.lower():
+                            obj = json.loads(line)
+                            s = str(obj.get("sender", "")).lower()
+                            c = str(obj.get("content", ""))
+                            t = str(obj.get("time_str", ""))
+                            if target == s or c.lower().startswith(target + ":"):
+                                clean_c = re.sub(r"^[^:]+:\s*", "", c).strip()
+                                if len(clean_c) > 2 and "拍了拍" not in clean_c and "<msg>" not in clean_c:
+                                    history.append(f"[{t}] {clean_c}")
+            except Exception:
+                pass
+        if len(history) > max_msgs:
+            history = history[-max_msgs:]
+        return "\n".join(history)
+
     def call_llm_advice(self, question: str, sender: str = "群友", session_name: str = "", session_type: str = "group", force_creative: bool = False) -> str:
         """调用用户配置的大模型生成专家建议：结合本地知识库高权置信度 + 联网搜索补充"""
         api_url = self.llm_config.get("api_url", "").strip()
@@ -982,44 +1008,40 @@ class WeChatAdvisorCore:
                         if len(kb_info) >= 1200:
                             break
         
-        # 2. 联网搜索兜底补充
+        # 2. 深入知识库提取该发言人真实画像与历史言行轨迹
+        sender_history = self.get_sender_history(sender, max_msgs=6)
+
+        # 3. 联网搜索兜底补充
         web_info = ""
         if len(kb_info) < 80:
             web_info = search_bing(question, max_results=2)
             
-        if session_type == "private":
-            system_prompt = (
-                f"你是微信私聊中针对好友「{session_name or sender}」的专属高情商智囊与谋士。\n"
-                "对方刚刚发来了一条消息。请给用户提供客观、通透的情商分析，并附上拿来即用的回复草稿。\n"
-                "【强制语言准则】：\n"
-                "1. 全程必须使用纯正自然的简体中文，严禁客服腔和机械客套话；\n"
-                "2. 请采用结构化格式输出：\n"
-                "   - 💡【情商分析】：洞察对方潜台词、情绪或核心诉求；\n"
-                "   - 💬【推荐微信回复草稿】：给出1-2句最得体、自然接地气的回复，方便直接发送。"
-            )
-            user_prompt = f"微信好友「{session_name or sender}」私聊对我说：\n“{question}”\n"
-            if kb_info:
-                user_prompt += f"\n【好友背景与过往聊天知识库】：\n{kb_info}\n"
-            user_prompt += "\n请给出你的高情商回复建议与草稿："
-        else:
-            system_prompt = (
-                f"你是微信技术交流群「{session_name or '开源技术交流群'}」的常驻技术军师与资深大模型推理架构师。\n"
-                "当监测到群友发言或报错求助时，你的任务是提供一段【有深度、切中底层要害、专业权威】的解答卡片。\n"
-                "【强制知识与表达准则】：\n"
-                "1. 全程必须使用纯正地道的简体中文，严禁输出任何英文思维链或机械客套！\n"
-                "2. 深度检索群内真实踩坑经验与知识库（权重最高，必须结合群内共识）；\n"
-                "3. 严禁只回复干瘪的一句话！必须结构化、有理有据，包含分析和具体操作命令；\n"
-                "4. 建议按以下清晰架构输出：\n"
-                "   - 💡【问题根因与诊断】：直击技术瓶颈（如显存带宽、NCCL通信阻塞、CUDA算力、量化精度等）；\n"
-                "   - 🛠️【排查与调优方案】：给出具体排查步骤、参数配置（如 --tensor-parallel-size、--gpu-memory-utilization）或避坑实测经验；\n"
-                "   - 💬【群聊快捷回复草稿】：提炼出一句最接地气、内行的大牛风格发言，方便直接发群装逼或解答。"
-            )
-            user_prompt = f"群内发言人【{sender}】说：\n“{question}”\n"
-            if kb_info:
-                user_prompt += f"\n【群内过往沉淀实测经验（最高权重依据）】：\n{kb_info}\n"
-            if web_info:
-                user_prompt += f"\n【联网最新搜索补充参考】：\n{web_info}\n"
-            user_prompt += "\n请直接给出你的深度架构师建议卡片内容："
+        system_prompt = (
+            "你是隐身于微信背后的顶级“超级个人军师”与资深技术战略架构师。\n"
+            "你的使命是：让聊天记录如同血肉一样融入你的认知，无所不知，洞悉群内生态、懂人情世故、精通专业知识，为软件使用者提供降维打击级的超凡辅助。\n\n"
+            "请严格按照以下【4大核心模块】组织卡片输出内容（层次清晰，干货拉满，严禁任何AI客服八股文与多余客套）：\n\n"
+            "🎯【推荐回复草稿】\n"
+            "（核心直接先给答案！深度模仿群内真实资深老玩家与高手的沟通风格：自然、内行、不做作、懂人情世故，可直接按 Ctrl+V 发送）\n\n"
+            "👤【发言人画像与群内定位】\n"
+            "（立体还原：他是个什么样的人？在群里处于什么角色生态位（如技术老兵/小白求助/倒买倒卖/折腾党/潜水员）？最近在折腾什么具体硬件、卡型或项目？）\n\n"
+            "🔍【意图剖析与潜台词拆解】\n"
+            "（结合该角色画像与本次发言深度透视：他表面这句话背后在想什么？潜台词是什么？真实意图与目的是什么（技术摸底/试探底价/求助/吹水/情绪发泄）？）\n\n"
+            "🧠【专家推演与思考过程】\n"
+            "（结合知识库里的历史上下文、真实踩坑血泪史与技术原理，为使用者呈现完整的专家决策推演逻辑与避坑参考指南。）"
+        )
+        
+        user_prompt = f"【会话来源】：{session_name or ('微信好友私聊' if session_type == 'private' else '微信技术群聊')}\n"
+        user_prompt += f"【当前发言人】：{sender}\n"
+        user_prompt += f"【当前发言内容】：\n“{question}”\n"
+        
+        if sender_history:
+            user_prompt += f"\n【发言人「{sender}」的历史发言轨迹与近期动向】：\n{sender_history}\n"
+        if kb_info:
+            user_prompt += f"\n【群内过往沉淀知识库与讨论记录】：\n{kb_info}\n"
+        if web_info:
+            user_prompt += f"\n【全网最新情报补充参考】：\n{web_info}\n"
+            
+        user_prompt += "\n请按照 4 大核心模块输出你的超级军师研判卡片："
         
         headers = {"Content-Type": "application/json"}
         if api_key:
