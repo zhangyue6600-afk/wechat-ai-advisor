@@ -50,69 +50,159 @@ def search_bing(query: str, max_results: int = 2) -> str:
     except Exception:
         return ""
 
-def search_local_kb(query: str, kb_dir: str, max_chars: int = 1200) -> str:
-    """在本地已提炼的知识库（包括当前会话与多群综合知识库）专题及问答对中进行深度相关度检索"""
-    words = [w for w in re.split(r"[\s,，?？!！。、]+", query) if len(w) >= 2]
-    if not words:
+def search_local_kb(query: str, kb_dir: str, max_chars: int = 2500) -> str:
+    """在本地已提炼的知识库（包含结构化JSONL、技术专题、问答对）中进行深度语义+时间感知检索"""
+    if not query or not query.strip():
         return ""
+
+    stopwords = {
+        '这个', '这么', '什么', '怎么', '怎样', '为什么', '有没有', '有没有人', '大家', '你们',
+        '我们', '他们', '一个', '一下', '最近', '里面', '请问', '知道', '谁能', '有人', '可以',
+        '觉得', '觉得呢', '有谁', '说说', '哪些', '这些', '那些', '是不是', '听说', '据说',
+        '聊过', '说是有', '知不知道', '一下这个', '有价值', '信息', '内容'
+    }
+
+    # 1. 识别时间意图
+    today = datetime.date.today()
+    # 获取今天是星期几 (0=周一, 6=周日)
+    cur_weekday = today.weekday()
+    target_dates = set()
+
+    # 计算最近的周末 (周六和周日)
+    if any(w in query for w in ['周末', '周六', '周日', '周天', '星期六', '星期天', '星期日']):
+        # 上一个周日
+        last_sunday = today - datetime.timedelta(days=(cur_weekday + 1) % 7) if cur_weekday != 6 else today
+        last_saturday = last_sunday - datetime.timedelta(days=1)
+        target_dates.add(last_saturday.strftime('%Y-%m-%d'))
+        target_dates.add(last_sunday.strftime('%Y-%m-%d'))
+    if '周五' in query or '星期五' in query:
+        diff = (cur_weekday - 4) % 7
+        target_dates.add((today - datetime.timedelta(days=diff if diff != 0 else 7)).strftime('%Y-%m-%d'))
+    if '周四' in query or '星期四' in query:
+        diff = (cur_weekday - 3) % 7
+        target_dates.add((today - datetime.timedelta(days=diff if diff != 0 else 7)).strftime('%Y-%m-%d'))
+    if '昨天' in query:
+        target_dates.add((today - datetime.timedelta(days=1)).strftime('%Y-%m-%d'))
+    if '今天' in query:
+        target_dates.add(today.strftime('%Y-%m-%d'))
+
+    # 2. 提取中英文实体/核心关键词 (支持中文字段 n-gram 切割，解决无空格分词失效问题)
+    en_words = set(re.findall(r'[a-zA-Z0-9_\-\.]{2,}', query))
+    ch_blocks = re.findall(r'[一-龥]+', query)
+    ch_words = set()
+    for block in ch_blocks:
+        if len(block) in (2, 3, 4) and block not in stopwords:
+            ch_words.add(block)
+        for n in (2, 3):
+            for i in range(len(block) - n + 1):
+                w = block[i:i+n]
+                if w not in stopwords and len(w) >= 2:
+                    ch_words.add(w)
+    keywords = list(en_words | ch_words)
 
     search_dirs = []
     if os.path.exists(kb_dir):
         search_dirs.append(kb_dir)
 
-    # 扫描外层 output_kbs 中所有的综合/合并知识库目录
     parent_output = os.path.dirname(os.path.abspath(kb_dir))
     if os.path.exists(parent_output):
         for entry in os.listdir(parent_output):
             full_entry = os.path.join(parent_output, entry)
             if os.path.isdir(full_entry) and full_entry not in search_dirs:
-                if any(kw in entry for kw in ["综合", "合并", "Merged", "vLLM"]):
+                if any(kw in entry for kw in ["综合", "合并", "Merged", "vLLM", "知识库", "富士通"]):
                     search_dirs.append(full_entry)
 
     matches = []
+
     for s_dir in search_dirs:
-        # 1. 优先检索精选高价值问答对 QA.jsonl
+        # A. 检索精选问答对 QA.jsonl
         qa_file = os.path.join(s_dir, "01_精选高价值问答对_QA.jsonl")
         if os.path.exists(qa_file):
             try:
                 with open(qa_file, "r", encoding="utf-8", errors="ignore") as f:
                     for line in f:
-                        if not line.strip():
-                            continue
+                        if not line.strip(): continue
                         qa_obj = json.loads(line)
-                        q_text = qa_obj.get("question", "")
-                        a_text = qa_obj.get("solution", "")
-                        combined = f"{q_text}\n{a_text}"
-                        score = sum(combined.lower().count(w.lower()) for w in words)
+                        combined = qa_obj.get('question','') + "\n" + qa_obj.get('solution','')
+                        score = sum(combined.lower().count(w.lower()) for w in keywords) if keywords else 0
                         if score > 0:
-                            matches.append((score * 2.0, f"【🎯 精选技术FAQ问答对】\n问: {q_text}\n答: {a_text}"))
+                            matches.append((score * 3.0, f"\xe3\x80\x90\xf0\x9f\x8e\xaf \xe7\xb2\xbe\xe9\x80\x89\xe6\x8a\x80\xe6\x9c\xafFAQ\xe9\x97\xae\xe7\xad\x94\xe5\xaf\xb9\xe3\x80\x91\n\xe9\x97\xae: {qa_obj.get('question','')}\n\xe7\xad\x94: {qa_obj.get('solution','')}"))
             except Exception:
                 pass
 
-        # 2. 检索所有技术专题与排错手册 Markdown
-        for md_file in glob.glob(os.path.join(s_dir, "**/*.md"), recursive=True):
+        # B. 检索所有技术专题手册 Markdown
+        for md_file in glob.glob(os.path.join(s_dir, "00_技术专题与避坑指南/*.md")):
             try:
                 with open(md_file, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
-                score = sum(content.lower().count(w.lower()) for w in words)
+                score = sum(content.lower().count(w.lower()) for w in keywords) if keywords else 0
                 if score > 0:
                     paragraphs = content.split("\n\n")
                     best_p = ""
                     best_score = 0
                     for p in paragraphs:
-                        ps = sum(p.lower().count(w.lower()) for w in words)
+                        ps = sum(p.lower().count(w.lower()) for w in keywords)
                         if ps > best_score and len(p.strip()) > 25:
                             best_score = ps
                             best_p = p.strip()
                     if best_p:
-                        fname = os.path.basename(md_file)
-                        matches.append((best_score, f"【群内经验/手册: {fname}】\n{best_p}"))
+                        matches.append((best_score * 2.5, f"\xe3\x80\x90\xf0\x9f\x93\x96 \xe6\x8a\x80\xe6\x9c\xaf\xe4\xb8\x93\xe9\xa2\x98\xe6\x89\x8b\xe5\x86\x8c: {os.path.basename(md_file)}\xe3\x80\x91\n{best_p}"))
             except Exception:
                 pass
 
+        # C. 深度检索 02_结构化数据_JSONL (支持海量真实发言检索与时间过滤)
+        jsonl_dir = os.path.join(s_dir, "02_结构化数据_JSONL")
+        if os.path.exists(jsonl_dir):
+            for jf in os.listdir(jsonl_dir):
+                if jf.endswith(".jsonl"):
+                    jpath = os.path.join(jsonl_dir, jf)
+                    try:
+                        with open(jpath, "r", encoding="utf-8", errors="ignore") as f:
+                            for line in f:
+                                if not line.strip(): continue
+                                m = json.loads(line)
+                                c = m.get("content", "")
+                                if not c or len(c) < 3 or "<msg>" in c[:20] or "<?xml" in c[:20]:
+                                    continue
+                                t_str = m.get("time_str", "")
+                                s_name = m.get("source_name") or m.get("_source_name") or "群聊"
+                                sender = m.get("sender_name") or m.get("sender") or "群友"
+
+                                score = 0.0
+                                # 时间过滤与加权
+                                if target_dates:
+                                    if not any(td in t_str for td in target_dates):
+                                        continue
+                                    score += 15.0
+                                    if len(c) > 20:
+                                        score += 5.0
+
+                                # 关键词加权
+                                if keywords:
+                                    c_lower = c.lower()
+                                    for kw in keywords:
+                                        if kw.lower() in c_lower:
+                                            weight = 5.0 if kw in ("猫哥", "tcat", "显卡", "富士通", "v100", "gaudi2", "mi250", "p800", "屯卡") else 1.5
+                                            score += weight
+
+                                if score > 0:
+                                    clean_c = c.replace('\n', ' ')[:160]
+                                    matches.append((score, f"[{s_name}] [{t_str}] {sender}: {clean_c}"))
+                    except Exception:
+                        pass
+
     matches.sort(key=lambda x: x[0], reverse=True)
     if matches:
-        return "\n\n".join([m[1] for m in matches[:3]])[:max_chars]
+        unique_results = []
+        seen = set()
+        for sc, text_item in matches:
+            if text_item not in seen:
+                seen.add(text_item)
+                unique_results.append(text_item)
+                if len(unique_results) >= 15:
+                    break
+        res_str = "\n".join(unique_results)
+        return res_str[:max_chars]
     return ""
 
 def parse_real_content(raw_bytes) -> str:
@@ -1173,14 +1263,23 @@ class WeChatAdvisorCore:
             
         kb_dir = os.path.join(self.data_dir, kb_folder_name) if kb_folder_name else ""
         if not kb_dir or not os.path.exists(kb_dir):
-            # 自动寻找第一个可用知识库
             all_kbs = self.list_all_knowledge_bases()
             if all_kbs:
                 kb_dir = os.path.join(self.data_dir, all_kbs[0]["folder_name"])
             else:
                 kb_dir = ""
                 
-        kb_info = search_local_kb(q, kb_dir, max_chars=1200) if kb_dir else ""
+        kb_info = search_local_kb(q, kb_dir, max_chars=2500) if kb_dir else ""
+        if not kb_info:
+            # 自动跨其他本地知识库兜底检索
+            for kb_item in self.list_all_knowledge_bases():
+                other_dir = os.path.join(self.data_dir, kb_item["folder_name"])
+                if other_dir != kb_dir:
+                    extra = search_local_kb(q, other_dir, max_chars=2000)
+                    if extra:
+                        kb_info = extra
+                        kb_dir = other_dir
+                        break
         
         system_prompt = (
             "你是基于微信群聊与私聊真实技术交流构建的 AI 军师架构师。\n"
