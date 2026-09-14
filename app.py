@@ -162,9 +162,16 @@ def export_merged_kb():
         core.distillation_progress["message"] = "正在初始化多群数据并切片..."
         core.distillation_progress["result"] = None
         
+        def run_distill_task():
+            try:
+                core.export_merged_knowledge_base(sessions, kb_title, days, True)
+            except Exception as e:
+                core.distillation_progress["status"] = "error"
+                core.distillation_progress["is_running"] = False
+                core.distillation_progress["message"] = f"知识库提炼失败: {str(e)}"
+                
         thread = threading.Thread(
-            target=core.export_merged_knowledge_base,
-            args=(sessions, kb_title, days, True),
+            target=run_distill_task,
             daemon=True
         )
         thread.start()

@@ -13,6 +13,7 @@ import sqlite3
 import hashlib
 import zipfile
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pyperclip
 import requests
 import zstandard as zstd
@@ -130,25 +131,30 @@ def search_local_kb(query: str, kb_dir: str, max_chars: int = 2500) -> str:
             except Exception:
                 pass
 
-        # B. 检索所有技术专题手册 Markdown
-        for md_file in glob.glob(os.path.join(s_dir, "00_技术专题与避坑指南/*.md")):
-            try:
-                with open(md_file, "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read()
-                score = sum(content.lower().count(w.lower()) for w in keywords) if keywords else 0
-                if score > 0:
-                    paragraphs = content.split("\n\n")
-                    best_p = ""
-                    best_score = 0
-                    for p in paragraphs:
-                        ps = sum(p.lower().count(w.lower()) for w in keywords)
-                        if ps > best_score and len(p.strip()) > 25:
-                            best_score = ps
-                            best_p = p.strip()
-                    if best_p:
-                        matches.append((best_score * 2.5, f"\xe3\x80\x90\xf0\x9f\x93\x96 \xe6\x8a\x80\xe6\x9c\xaf\xe4\xb8\x93\xe9\xa2\x98\xe6\x89\x8b\xe5\x86\x8c: {os.path.basename(md_file)}\xe3\x80\x91\n{best_p}"))
-            except Exception:
-                pass
+        # B. 检索五维立体知识库与技术专题手册 Markdown
+        target_md_patterns = [
+            os.path.join(s_dir, "00_五维立体知识库/*.md"),
+            os.path.join(s_dir, "00_技术专题与避坑指南/*.md")
+        ]
+        for pattern in target_md_patterns:
+            for md_file in glob.glob(pattern):
+                try:
+                    with open(md_file, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                    score = sum(content.lower().count(w.lower()) for w in keywords) if keywords else 0
+                    if score > 0:
+                        paragraphs = content.split("\n\n")
+                        best_p = ""
+                        best_score = 0
+                        for p in paragraphs:
+                            ps = sum(p.lower().count(w.lower()) for w in keywords)
+                            if ps > best_score and len(p.strip()) > 25:
+                                best_score = ps
+                                best_p = p.strip()
+                        if best_p:
+                            matches.append((best_score * 3.0, f"【📖 知识库专卷: {os.path.basename(md_file)}】\n{best_p}"))
+                except Exception:
+                    pass
 
         # C. 深度检索 02_结构化数据_JSONL (支持海量真实发言检索与时间过滤)
         jsonl_dir = os.path.join(s_dir, "02_结构化数据_JSONL")
@@ -681,8 +687,9 @@ class WeChatAdvisorCore:
             "room_name": room_name,
             "clean_name": clean_name,
             "created_at": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "last_msg_time": max([r.get("create_time", 0) for r in all_records]) if all_records else int(time.time()),
+            "last_msg_time": max([r.get("time", 0) for r in all_records]) if all_records else int(time.time()),
             "total_messages": len(all_records),
+            "kb_structure": "standard",
             "kb_title": room_name
         }
         with open(os.path.join(kb_path, ".kb_meta.json"), "w", encoding="utf-8") as f:
@@ -708,7 +715,7 @@ class WeChatAdvisorCore:
         }
 
     def _call_llm_for_distillation(self, chunk_text: str) -> str:
-        """调用配置的大模型对微信技术交流切片进行深度结构化提炼"""
+        """【阶段1：高浓度微观事实萃取】并行分析切片，提取技术事实、人物言行与硬件行情"""
         api_url = self.llm_config.get("api_url", "").strip()
         api_key = self.llm_config.get("api_key", "").strip()
         model = self.llm_config.get("model", "qwen27b").strip()
@@ -720,36 +727,73 @@ class WeChatAdvisorCore:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         system_prompt = (
-            "你是一名资深的大模型推理系统架构师和技术专家。\n"
-            "以下是一段从多个技术群中提取的真实聊天记录切片。请对其中的技术交流内容进行高浓度信息提炼与蒸馏：\n"
-            "【提炼原则】：\n"
-            "1. 全程必须使用规范地道的简体中文！\n"
-            "2. 提取出真实发生的高价值技术求助、故障报错及群友给出的实测有效解决方案；\n"
-            "3. 务必保留关键软硬件参数（如 GPU型号、CUDA版本、显存、TP并行度、AWQ/GPTQ量化、启动命令或配置参数）；\n"
-            "4. 坚决过滤无意义寒暄、灌水、表情包；若该切片全为闲聊或无明确技术结论，直接回复'【无有效技术沉淀】'即可；\n"
-            "5. 输出清晰的 Markdown 问答块，格式格式如下：\n"
-            "### 问答/故障：[一句话概括核心问题]\n"
-            "- **核心痛点/报错现象**：...\n"
-            "- **根因分析/环境因素**：...\n"
-            "- **有效实测解决方案**：...\n"
+            "你是一个顶级社群情报分析师与资深大模型系统架构师。\n"
+            "以下是一段从技术群/行业群中截取的真实连续聊天记录切片。\n"
+            "请以最细致、不遗漏任何有价值细节的标准，对本切片进行高纯度事实萃取：\n\n"
+            "【萃取三大核心维度】：\n"
+            "1. 🛠️ [技术实测与踩坑]：真实发生的问题报错、环境参数（GPU/驱动/CUDA/量化方式/参数配置/启动命令）及实测验证的有效解决手段或避坑经验；\n"
+            "2. 👤 [人物画像与言行]：谁发表了独特的观点？谁表现出特定领域的专长或硬件装备？谁近期购买/转让了什么？谁表现出独特的沟通性格？\n"
+            "3. 💰 [硬件行情与设备交易]：提及的显卡、主板、准系统、配件、实测功耗、发热、二手收售价、渠道评价或避坑黑名单；\n"
+            "4. 🔤 [圈内黑话/缩写梗]：涉及的群内特有黑话、缩写、俗称或谐音梗。\n\n"
+            "【输出规则】：\n"
+            "- 如果切片纯属无营养寒暄、灌水打屁且毫无上述四类信息，请务必直接输出：【PASS】；\n"
+            "- 若有高价值信息，请分点清晰列出，务必使用地道严谨的中文，保留发言人昵称与关键数字/命令。"
         )
         payload = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"请深度提炼以下微信技术群交流切片：\n\n{chunk_text}"}
+                {"role": "user", "content": f"请对以下群聊交流切片进行深度事实萃取：\n\n{chunk_text}"}
             ],
             "temperature": 0.3,
-            "max_tokens": 1024
+            "max_tokens": 1536
         }
         try:
             target_url = api_url.rstrip("/") + "/chat/completions"
-            resp = requests.post(target_url, headers=headers, json=payload, timeout=30, proxies=proxies)
+            resp = requests.post(target_url, headers=headers, json=payload, timeout=45, proxies=proxies)
             if resp.status_code == 200:
                 data = resp.json()
                 msg = data["choices"][0]["message"]
                 content = msg.get("content") or ""
-                # 清洗 reasoning 泄露
+                if "<think>" in content and "</think>" in content:
+                    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+                res_clean = content.strip()
+                if "【PASS】" in res_clean or res_clean == "PASS":
+                    return ""
+                return res_clean
+        except Exception:
+            pass
+        return ""
+
+    def _call_llm_synthesis(self, system_role: str, task_prompt: str, context_facts: str) -> str:
+        """【阶段2：三路专家全局交叉重构】调用各领域顶级专家提示词进行宏观维基编写"""
+        api_url = self.llm_config.get("api_url", "").strip()
+        api_key = self.llm_config.get("api_key", "").strip()
+        model = self.llm_config.get("model", "qwen27b").strip()
+        if not api_url:
+            return ""
+
+        proxies = {"http": None, "https": None} if is_private_ip(api_url) else None
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_role},
+                {"role": "user", "content": f"{task_prompt}\n\n【全量事实素材库】：\n{context_facts}"}
+            ],
+            "temperature": 0.4,
+            "max_tokens": 4096
+        }
+        try:
+            target_url = api_url.rstrip("/") + "/chat/completions"
+            resp = requests.post(target_url, headers=headers, json=payload, timeout=120, proxies=proxies)
+            if resp.status_code == 200:
+                data = resp.json()
+                msg = data["choices"][0]["message"]
+                content = msg.get("content") or ""
                 if "<think>" in content and "</think>" in content:
                     content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
                 return content.strip()
@@ -827,15 +871,47 @@ class WeChatAdvisorCore:
             for item in all_records:
                 f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
-        # 3. 智能时间切片与大模型深度 Q&A 蒸馏
-        distilled_qa_list = []
+        # 3. 智能轻量预清洗与高纯度话题切片
+        distilled_facts_list = []
+        tech_manual_content = ""
+        profiles_content = ""
+        slang_content = ""
+        hardware_content = ""
+
         if deep_distill and len(all_records) > 0:
-            # 按 10 分钟闲置或达到 20 条消息进行切片 (Chunking)
+            # 规则前置轻量级脱噪（极速剔除纯灌水、表情包及无实体短对话）
+            noise_words = {"好的", "收到", "ok", "666", "哈哈", "哈哈哈", "嗯嗯", "是的", "对", "mark", "已收到", "点赞", "强", "牛", "感谢"}
+            tech_keywords = [
+                "error", "fail", "cuda", "vllm", "sglang", "ollama", "awq", "gptq", "fp8", "int4",
+                "显存", "显卡", "4090", "3090", "h100", "a100", "v100", "p40", "t4", "rtx",
+                "nvlink", "pcie", "tp", "pp", "量化", "微调", "吞吐", "并发", "准系统", "电源",
+                "主板", "散热", "风扇", "水冷", "驱动", "内核", "ubuntu", "docker", "参数", "报错",
+                "多少钱", "出", "收", "买", "卖", "老哥", "大佬", "怎么", "为什么", "求", "有人"
+            ]
+
+            def is_valuable_message(msg_text: str) -> bool:
+                m_clean = msg_text.strip()
+                if len(m_clean) < 4:
+                    return False
+                if m_clean in noise_words:
+                    return False
+                if m_clean.startswith("[") and m_clean.endswith("]") and len(m_clean) < 15:
+                    return False
+                if len(m_clean) >= 15:
+                    return True
+                m_lower = m_clean.lower()
+                return any(k in m_lower for k in tech_keywords)
+
+            cleaned_records = [r for r in all_records if is_valuable_message(r.get("content", ""))]
+            if not cleaned_records:
+                cleaned_records = all_records  # 兜底防止过度过滤
+
+            # 按 15 分钟闲置或达到 20 条消息进行完整无死角切片 (Chunking)
             chunks = []
             curr_chunk = []
             last_ts = 0
-            for item in all_records:
-                if curr_chunk and (item["timestamp"] - last_ts > 600 or len(curr_chunk) >= 20):
+            for item in cleaned_records:
+                if curr_chunk and (item["timestamp"] - last_ts > 900 or len(curr_chunk) >= 20):
                     chunks.append(curr_chunk)
                     curr_chunk = []
                 curr_chunk.append(item)
@@ -843,52 +919,160 @@ class WeChatAdvisorCore:
             if curr_chunk:
                 chunks.append(curr_chunk)
 
-            # 精选最新的 10 个核心技术窗口（价值最高且速度最快）
-            selected_chunks = chunks[-10:] if len(chunks) > 10 else chunks
-            total_chunks = len(selected_chunks)
+            total_chunks = len(chunks)
             if total_chunks > 0:
                 self.distillation_progress["total"] = total_chunks
                 self.distillation_progress["is_running"] = True
                 self.distillation_progress["status"] = "distilling"
 
-                for idx, c in enumerate(selected_chunks):
-                    p_val = 25 + int(((idx + 1) / total_chunks) * 70)
-                    self.distillation_progress["current"] = idx + 1
-                    self.distillation_progress["percent"] = p_val
-                    self.distillation_progress["message"] = f"正在让大模型深度蒸馏第 {idx + 1}/{total_chunks} 个技术交流切片..."
+                # === 阶段 1：全量微观脱噪与事实萃取 (多线程并行，100%全覆盖) ===
+                extracted_facts = []
+                completed_count = 0
+                max_workers = 6
 
+                def process_chunk(idx, c):
                     chunk_text = "\n".join([f"[{m['source_name']}] {m['sender']}: {m['content']}" for m in c])
-                    res = self._call_llm_for_distillation(chunk_text)
-                    if res and "无有效技术沉淀" not in res and len(res) > 20:
-                        distilled_qa_list.append(res)
+                    fact = self._call_llm_for_distillation(chunk_text)
+                    return idx, fact
+
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {executor.submit(process_chunk, idx, c): idx for idx, c in enumerate(chunks)}
+                    for future in as_completed(futures):
+                        completed_count += 1
+                        idx, fact = future.result()
+                        if fact and len(fact) > 20:
+                            extracted_facts.append(fact)
+                        p_val = int(25 + (completed_count / total_chunks) * 45)  # 25% -> 70%
+                        self.distillation_progress["current"] = completed_count
+                        self.distillation_progress["percent"] = p_val
+                        self.distillation_progress["message"] = f"【阶段1/2 全量穿透】已萃取 {completed_count}/{total_chunks} 个话题切片 (沉淀高纯度事实 {len(extracted_facts)} 组)..."
+
+                distilled_facts_list = extracted_facts
+
+                # === 阶段 2：三路专家交叉重构维基 (Thematic Reduce 阶段) ===
+                self.distillation_progress["percent"] = 75
+                self.distillation_progress["message"] = "【阶段2/2 专家三路重构】架构师、社群专家、硬件买手正在交叉编译维基..."
+
+                # 聚合全部微观事实为全局上下文
+                all_facts_text = "\n\n---\n\n".join(distilled_facts_list) if distilled_facts_list else "（未提取到事实）"
+
+                # 专家 1：大模型系统与推理架构师
+                prompt_tech_role = "你是一名享誉业界的顶级大模型系统与推理架构师，精通 vLLM/SGLang 源码、GPU通信拓扑及高并发生产部署。"
+                prompt_tech_task = (
+                    f"请基于以下从群聊事实库中提取的全部干货，为「{clean_title}」撰写一份权威硬核的《核心技术专题与实测避坑手册》。\n"
+                    "要求全面结构化，必须包含四大篇章：\n"
+                    "1. 🚀 GPU算力拓扑与多卡通信篇（PCIe带宽瓶颈、NVLink互联实测、NUMA节点绑定）；\n"
+                    "2. ⚡ 推理引擎压榨与量化部署篇（vLLM、SGLang、Ollama实战部署参数，AWQ/FP8量化取舍）；\n"
+                    "3. 🛠️ 群友实战高频报错与精准排错手册（真实报错日志、根因、验证有效的修复命令）；\n"
+                    "4. ⚠️ 生产落地避坑铁律（杜绝机械空话，给出真实数据与参数配置）。"
+                )
+
+                # 专家 2：社群社会学与人物关系分析师
+                prompt_profile_role = "你是一名资深社群社会学与网络人际关系分析师，擅长从海量对话中刻画人物性格、技术专长及影响力网络。"
+                prompt_profile_task = (
+                    f"请基于以下事实素材，为「{clean_title}」社群编写两份档案：\n"
+                    "【部分一：关键人物人设档案图谱】\n"
+                    "挑出发言活跃、技术过硬或具有代表性性格的群友/KOL，为每个人建立档案卡：\n"
+                    "- 👤 昵称：...\n"
+                    "- 🏷️ 社群生态定位：(如：硬件极客、底层算力老兵、收卡倒爷、严谨学者、萌新提问者等)\n"
+                    "- 💡 专长技术领域：(如：vLLM调参、二手服务器改水冷、多卡通信调优)\n"
+                    "- 🖥️ 主力装备/实操经验：(如：拥有8卡4090机架、折腾过浪潮准系统)\n"
+                    "- 🗣️ 发言风格与性格：(如：直爽不废话、喜欢甩命令、报喜不报忧)\n\n"
+                    "【部分二：圈内特有黑话与隐语缩写词典】\n"
+                    "整理群内出现过的所有黑话、设备俗称、缩写梗与行业暗号，给出地道解释。"
+                )
+
+                # 专家 3：资深硬件供应链买手与行情分析师
+                prompt_hw_role = "你是一名在华强北和二手服务器机房摸爬滚打十余年的资深硬件供应链老买手与行情分析师。"
+                prompt_hw_task = (
+                    f"请基于以下事实素材，为「{clean_title}」整理一份《真实硬件行情晴雨表与选型避坑指南》：\n"
+                    "1. 💰 核心硬件二手/渠道真实收售价盘点（包括各类显卡、准系统、CPU、服务器主板在群内提及的真实成交/求购价）；\n"
+                    "2. ⚖️ 硬件性价比与实测表现梯队榜（针对大模型私有化部署的最佳准系统方案与显卡组合）；\n"
+                    "3. 🚫 翻车避坑黑名单（发热暴雷、兼容性极差、虚标电源、暗病众多的硬件型号与避坑建议）。"
+                )
+
+                # 并发执行三位专家的编译
+                with ThreadPoolExecutor(max_workers=3) as synth_pool:
+                    future_tech = synth_pool.submit(self._call_llm_synthesis, prompt_tech_role, prompt_tech_task, all_facts_text)
+                    future_prof = synth_pool.submit(self._call_llm_synthesis, prompt_profile_role, prompt_profile_task, all_facts_text)
+                    future_hw = synth_pool.submit(self._call_llm_synthesis, prompt_hw_role, prompt_hw_task, all_facts_text)
+
+                    tech_manual_content = future_tech.result()
+                    both_prof_content = future_prof.result()
+                    hardware_content = future_hw.result()
+
+                # 拆分人物档案与黑话词典（若大模型合在一个回复中）
+                profiles_content = both_prof_content
+                slang_content = "详见《02_关键人物档案与人设图谱.md》中的词典章节。"
 
             self.distillation_progress["status"] = "completed"
             self.distillation_progress["is_running"] = False
             self.distillation_progress["percent"] = 100
+            self.distillation_progress["message"] = "五维立体知识库提炼构建全部完成！"
 
-        # 保存提炼好的技术专题与避坑手册
+        # === 阶段 3：全景维度文档落盘与灵魂注入 ===
+        # 1. 创建五维立体知识库专卷
+        d5_dir = os.path.join(kb_path, "00_五维立体知识库")
+        os.makedirs(d5_dir, exist_ok=True)
+
+        # 卷一：核心技术专题与实测避坑手册
+        manual_path = os.path.join(d5_dir, "01_核心技术专题与实测避坑手册.md")
+        with open(manual_path, "w", encoding="utf-8") as f:
+            if tech_manual_content:
+                f.write(tech_manual_content)
+            else:
+                f.write(f"# {clean_title} · 核心技术专题与实测避坑手册\n\n（未启用全量深度蒸馏，或当前群聊未提取到有效技术内容）\n")
+
+        # 卷二：关键人物档案与人设图谱
+        prof_path = os.path.join(d5_dir, "02_关键人物档案与人设图谱.md")
+        with open(prof_path, "w", encoding="utf-8") as f:
+            if profiles_content:
+                f.write(profiles_content)
+            else:
+                f.write(f"# {clean_title} · 关键人物档案与人设图谱\n\n（未启用全量深度蒸馏）\n")
+
+        # 卷三：真实硬件行情与选型避坑晴雨表
+        hw_path = os.path.join(d5_dir, "03_真实硬件行情与选型避坑晴雨表.md")
+        with open(hw_path, "w", encoding="utf-8") as f:
+            if hardware_content:
+                f.write(hardware_content)
+            else:
+                f.write(f"# {clean_title} · 真实硬件行情与选型避坑晴雨表\n\n（未启用全量深度蒸馏）\n")
+
+        # 卷四：圈内特有黑话与隐语缩写词典
+        slang_path = os.path.join(d5_dir, "04_圈内黑话与隐语暗号词典.md")
+        with open(slang_path, "w", encoding="utf-8") as f:
+            f.write(f"# {clean_title} · 圈内特有黑话与隐语暗号词典\n\n" + (profiles_content if profiles_content else "（未启用全量深度蒸馏）\n"))
+
+        # 同步兼容历史路径：00_技术专题与避坑指南/01_多群聚合实测经验与避坑指南.md
         qa_doc_path = os.path.join(kb_path, "00_技术专题与避坑指南", "01_多群聚合实测经验与避坑指南.md")
         with open(qa_doc_path, "w", encoding="utf-8") as f:
-            f.write(f"# {clean_title} · 核心技术专题与实测避坑手册\n\n")
-            f.write(f"> 基于群聊真实报错、环境参数与排错实录，由本地大模型深度提炼沉淀。\n\n")
-            if distilled_qa_list:
-                for idx, qa in enumerate(distilled_qa_list, 1):
+            if tech_manual_content:
+                f.write(tech_manual_content)
+            elif distilled_facts_list:
+                f.write(f"# {clean_title} · 核心技术专题与实测避坑手册\n\n")
+                for idx, qa in enumerate(distilled_facts_list, 1):
                     f.write(f"## 专题实录 {idx}\n{qa}\n\n---\n\n")
             else:
                 f.write("（未启用大模型深度蒸馏，或当前切片中未提取到结构化技术问答）\n")
 
-        # 4. 生成 Agent_Prompt.md
+        # 4. 生成注入全景世界观的 Agent_Prompt.md
         prompt_path = os.path.join(kb_path, "Agent_Prompt.md")
         with open(prompt_path, "w", encoding="utf-8") as f:
-            f.write(f"""# {clean_title} · 专属 AI 军师系统设定
+            f.write(f"""# {clean_title} · 顶级 AI 军师系统全景认知引导词
 
-你是一个融合了【{', '.join(source_names)}】所有实测经验的顶级技术军师与架构师。
-你熟知群内老玩家所讨论过的所有底层报错、量化技巧、显存优化以及排错避坑方案。
+你是由「{clean_title}」（涵盖：{', '.join(source_names)}）数万条真实交流沉淀训练而成的顶级专家军师。
+你不仅熟知底层所有技术细节与报错避坑经验，还彻底通晓群内老玩家的人设背景、说话行话风格以及硬件交易二手底价。
 
-## 回复准则：
-1. 优先调用【00_技术专题与避坑指南】中的真实实测参数与解决方案；
-2. 保持技术群老兵的沉稳、极客、直奔要害风格；
-3. 输出纯正中文，杜绝机械套话。
+## 核心维度掌握：
+1. **技术拓扑与排错**：精通知识库《01_核心技术专题与实测避坑手册》中记录的实测参数、报错命令及量化配置；
+2. **社群人物洞察**：熟知知识库《02_关键人物档案与人设图谱》中各位核心领袖与常客的技术长板、性格习惯及潜台词；
+3. **硬件真实行情**：通晓知识库《03_真实硬件行情与选型避坑晴雨表》中的一手二手价格、渠道评价与翻车雷区。
+
+## 军师回复铁律：
+- 🎯 **直击要害**：给出推荐回复草稿时，必须符合群内硬核老鸟的语气，简洁、沉稳、专业；
+- 👤 **知己知彼**：遇特定人物提问时，结合其历史发言与性格标签进行针对性拆解；
+- 💰 **行情敏锐**：涉及询价、买卖、硬件选型时，用真实底价和群友实测教训提供权威参考。
 """)
 
         # 4.5 保存合并知识库元数据
@@ -900,7 +1084,8 @@ class WeChatAdvisorCore:
             "created_at": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             "last_msg_time": max([r.get("timestamp", 0) for r in all_records]) if all_records else int(time.time()),
             "total_messages": len(all_records),
-            "distilled_count": len(distilled_qa_list),
+            "distilled_count": len(distilled_facts_list),
+            "kb_structure": "5D",
             "kb_title": clean_title
         }
         with open(os.path.join(kb_path, ".kb_meta.json"), "w", encoding="utf-8") as f:
@@ -919,7 +1104,7 @@ class WeChatAdvisorCore:
         res_dict = {
             "status": "success",
             "total_exported": len(all_records),
-            "distilled_count": len(distilled_qa_list),
+            "distilled_count": len(distilled_facts_list),
             "folder_name": kb_folder_name,
             "zip_filename": zip_filename,
             "zip_path": zip_filepath,
@@ -1305,10 +1490,10 @@ class WeChatAdvisorCore:
         
         system_prompt = (
             "你是基于微信群聊与私聊真实技术交流构建的 AI 军师架构师。\n"
-            "你的任务是直接、专业、针对性地回答用户提出的技术或业务问题。\n"
+            "你的任务是直接、专业、针对性地回答用户提出的技术、社群人物或硬件行情问题。\n"
             "准则：\n"
-            "1. 严格参考【本地知识库参考内容】中记录的实测参数、踩坑经验、解决方案和代码；\n"
-            "2. 保持技术老兵的直接、硬核、条理清晰风格，列出分步操作或排查方案；\n"
+            "1. 严格参考【本地知识库参考内容】中记录的实测参数、报错排查、人物特征与硬件行情价格；\n"
+            "2. 保持技术老兵的直接、硬核、条理清晰风格，列出明确数据、对比与操作建议；\n"
             "3. 如果知识库中没有明确答案，请运用你的专业知识推导，并诚实说明为专业推测；\n"
             "4. 输出纯中文，杜绝废话和客套开场白。"
         )
@@ -1435,6 +1620,20 @@ class WeChatAdvisorCore:
         meta["last_sync_time"] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
+
+        # 3.5 智能增量知识追加（如果有新增技术/人物交流，快速萃取追加）
+        if len(new_records) >= 5 and self.llm_config.get("api_url"):
+            try:
+                inc_text = "\n".join([f"[{r.get('sender_name') or r.get('sender') or '群友'}]: {r.get('content')}" for r in new_records[-30:]])
+                patch_fact = self._call_llm_for_distillation(inc_text)
+                if patch_fact and "PASS" not in patch_fact and len(patch_fact.strip()) > 30:
+                    d5_dir = os.path.join(kb_path, "00_五维立体知识库")
+                    if os.path.exists(d5_dir):
+                        inc_log_path = os.path.join(d5_dir, "06_近期增量情报补丁.md")
+                        with open(inc_log_path, "a", encoding="utf-8") as inc_f:
+                            inc_f.write(f"\n\n### 增量情报更新 ({datetime.datetime.now().strftime('%Y-%m-%d %H:%M')})\n{patch_fact}\n")
+            except Exception:
+                pass
             
         # 4. 重新打包 Zip
         zip_files = [f for f in os.listdir(self.data_dir) if f.startswith(meta.get("clean_name", meta.get("clean_title", ""))) and f.endswith(".zip")]

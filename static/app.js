@@ -11,13 +11,13 @@ function finishExportSuccess(data) {
   if (progressText) progressText.innerText = "提炼与构建完成！";
 
   const totalCount = data.total_exported || 0;
-  const qaCount = data.distilled_count || 0;
-  const summaryPrefix = isMergeMode ? `【多群综合技术知识库】已生成！` : `知识库提炼完成！`;
-  const qaInfo = qaCount ? `，并由大模型提炼出 ${qaCount} 组高价值技术 Q&A 避坑问答对与排错手册` : "";
+  const factCount = data.distilled_count || 0;
+  const summaryPrefix = isMergeMode ? `【五维立体综合知识库】已生成！` : `五维立体知识库提炼完成！`;
+  const factInfo = factCount ? `，并由大模型微观萃取提炼出 ${factCount} 组高浓度事实，三路专家交叉重构为五维知识矩阵（技术避坑 + 人物档案 + 黑话暗号 + 硬件行情）` : "";
   
   const summaryEl = document.getElementById("kb-summary-text");
   if (summaryEl) {
-    summaryEl.innerText = `${summaryPrefix} 共归并 ${totalCount.toLocaleString()} 条有效技术交流${qaInfo}，已打包生成双层标准知识库。`;
+    summaryEl.innerText = `${summaryPrefix} 共归并 ${totalCount.toLocaleString()} 条有效技术交流${factInfo}，已打包生成标准知识库。`;
   }
   
   const dlBtn = document.getElementById("btn-download-zip");
@@ -498,6 +498,11 @@ async function handleStartExport() {
           if (pData.status === "completed" && pData.result) {
             clearInterval(distillPollTimer);
             finishExportSuccess(pData.result);
+          } else if (pData.status === "error") {
+            clearInterval(distillPollTimer);
+            btn.disabled = false;
+            spin.classList.add("hidden");
+            alert("知识库提炼失败: " + (pData.message || "未知错误"));
           }
         }
       } catch (e) {}
