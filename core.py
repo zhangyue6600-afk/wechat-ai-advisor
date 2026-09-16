@@ -235,6 +235,8 @@ def parse_real_content(raw_bytes) -> str:
             if start != -1:
                 xml_str = text[start:]
                 root = ET.fromstring(xml_str)
+                if root.find(".//img") is not None or root.tag == "img":
+                    return "[群友分享了图片/截屏]"
                 appmsg = root.find(".//appmsg") if root.tag != "appmsg" else root
                 title = appmsg.findtext("title") or "" if appmsg is not None else ""
                 refer = root.find(".//refermsg")
@@ -243,7 +245,9 @@ def parse_real_content(raw_bytes) -> str:
                     ref_nick = refer.findtext("displayname") or ""
                     ref_cnt = (refer.findtext("content") or "").strip()
                     ref_txt = f' (引用@{ref_nick}: "{ref_cnt}")'
-                return f"{title}{ref_txt}".strip()
+                parsed_res = f"{title}{ref_txt}".strip()
+                if parsed_res:
+                    return parsed_res
         except Exception:
             pass
             
@@ -251,6 +255,8 @@ def parse_real_content(raw_bytes) -> str:
     return text
 
 def _custom_friendly_content(content, mtype):
+    if mtype == 3 or str(mtype) == "3":
+        return "[群友分享了图片/截屏]"
     parsed = parse_real_content(content)
     if parsed:
         return parsed
@@ -285,6 +291,8 @@ class WeChatAdvisorCore:
         self.event_subscribers = []
         self.recent_events = []
         self._nickname_cache = {}
+        self._contact_map = {}
+        self._name2id_map = {}
         self.distillation_progress = {
             "is_running": False,
             "status": "idle",
@@ -321,23 +329,115 @@ class WeChatAdvisorCore:
     def _init_db(self):
         try:
             self.db = WeChatDB()
+            self._preload_contact_and_name_map()
             return True, f"已连接微信数据库: {self.db.account_dir}"
         except Exception as e:
             return False, f"未检测到运行中的微信或无法获取密钥: {e}"
 
-    def get_cached_nickname(self, user: str) -> str:
-        if not user:
-            return ""
-        if user in self._nickname_cache:
-            return self._nickname_cache[user]
-        nick = str(user)
+    def _preload_contact_and_name_map(self):
+        """一次性快速预载联系人与 Name2Id 映射表到内存，极速解析真人人名"""
+        if not self.db:
+            return
         try:
-            if self.db:
-                nick = self.db.get_nickname(user) or str(user)
+            conn = self.db._open("contact\\contact.db")
+            cur = conn.cursor()
+            cur.execute("SELECT username, nick_name, remark FROM contact")
+            for r in cur.fetchall():
+                u = r["username"]
+                rem = (r["remark"] or "").strip()
+                nic = (r["nick_name"] or "").strip()
+                if rem and nic and rem != nic:
+                    disp = f"{rem}({nic})"
+                else:
+                    disp = rem or nic or u
+                self._contact_map[u] = disp
+                self._nickname_cache[u] = disp
+            conn.close()
         except Exception:
-            nick = str(user)
-        self._nickname_cache[user] = nick
-        return nick
+            pass
+
+        try:
+            for rel in self.db._message_dbs():
+                try:
+                    conn = self.db._open(rel)
+                    cur = conn.cursor()
+                    cur.execute("SELECT rowid, user_name FROM Name2Id")
+                    for r in cur.fetchall():
+                        rid = r["rowid"]
+                        wxid = r["user_name"]
+                        if wxid:
+                            self._name2id_map[(rel, rid)] = wxid
+                            self._name2id_map[(rel, str(rid))] = wxid
+                            self._name2id_map[rid] = wxid
+                            self._name2id_map[str(rid)] = wxid
+                            disp = self._contact_map.get(wxid) or wxid
+                            self._nickname_cache[(rel, str(rid))] = disp
+                            self._nickname_cache[str(rid)] = disp
+                    conn.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def get_cached_nickname(self, user, db_rel: str = None) -> str:
+        """从内存缓存极速查询昵称，支持按分库 db_rel 定位 Name2Id，打通真实备注与群昵称"""
+        if user is None:
+            return ""
+        s_user = str(user).strip()
+        if not s_user:
+            return ""
+
+        # 优先按 (db_rel, user) 精确查找
+        if db_rel and (db_rel, s_user) in self._nickname_cache:
+            return self._nickname_cache[(db_rel, s_user)]
+
+        if s_user in self._nickname_cache:
+            return self._nickname_cache[s_user]
+
+        if s_user.isdigit():
+            num_id = int(s_user)
+            wxid = None
+            if db_rel and (db_rel, num_id) in self._name2id_map:
+                wxid = self._name2id_map[(db_rel, num_id)]
+            elif num_id in self._name2id_map:
+                wxid = self._name2id_map[num_id]
+            elif s_user in self._name2id_map:
+                wxid = self._name2id_map[s_user]
+
+            if wxid:
+                disp = self._contact_map.get(wxid) or self._query_contact_name(wxid)
+                if db_rel:
+                    self._nickname_cache[(db_rel, s_user)] = disp
+                self._nickname_cache[s_user] = disp
+                return disp
+
+        if s_user in self._contact_map:
+            self._nickname_cache[s_user] = self._contact_map[s_user]
+            return self._nickname_cache[s_user]
+
+        nick = self._query_contact_name(s_user)
+        self._nickname_cache[s_user] = nick or s_user
+        return self._nickname_cache[s_user]
+
+    def _query_contact_name(self, wxid: str) -> str:
+        """从 contact.db 查找单条联系人备注或昵称"""
+        if not self.db or not wxid:
+            return wxid
+        try:
+            conn = self.db._open("contact\\contact.db")
+            cur = conn.cursor()
+            cur.execute("SELECT nick_name, remark FROM contact WHERE username = ? LIMIT 1", (wxid,))
+            r = cur.fetchone()
+            conn.close()
+            if r:
+                rem = (r["remark"] or "").strip()
+                nic = (r["nick_name"] or "").strip()
+                if rem and nic and rem != nic:
+                    return f"{rem}({nic})"
+                return rem or nic or wxid
+        except Exception:
+            pass
+        return wxid
 
     def check_wechat_status(self) -> dict:
         if self.db is None:
@@ -546,7 +646,7 @@ class WeChatAdvisorCore:
                         else:
                             sender_nick = room_name
                     else:
-                        sender_nick = self.get_cached_nickname(sid) or str(sid)
+                        sender_nick = self.get_cached_nickname(sid, db_rel=rel) or str(sid)
                     records.append({
                         "id": lid,
                         "time": ctime,
@@ -595,7 +695,7 @@ class WeChatAdvisorCore:
                         else:
                             sender_nick = room_name
                     else:
-                        sender_nick = self.get_cached_nickname(sid) or str(sid)
+                        sender_nick = self.get_cached_nickname(sid, db_rel=rel) or str(sid)
                     all_records.append({
                         "id": lid,
                         "time": ctime,
@@ -1347,7 +1447,7 @@ class WeChatAdvisorCore:
                         return
                     sender_nick = session_info["name"]
                 else:
-                    sender_nick = self.db.get_nickname(sender_id) or msg.get("sender_username") or "群友"
+                    sender_nick = self.get_cached_nickname(sender_id) or msg.get("sender_username") or "群友"
                     
                 now_str = datetime.datetime.now().strftime("%H:%M:%S")
                 is_valuable, intent_desc = self.analyze_intent(content, session_type=session_info["type"])
