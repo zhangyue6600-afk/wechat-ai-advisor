@@ -56,6 +56,12 @@ def search_local_kb(query: str, kb_dir: str, max_chars: int = 2500) -> str:
     if not query or not query.strip():
         return ""
 
+    # 智能硬件错别字/别名自动扩展 (例如把 guadi/guadi2 映射为 gaudi/gaudi2/habana)
+    q_lower = query.lower()
+    expanded_aliases = []
+    if any(k in q_lower for k in ["guadi", "gaudi", "高迪", "habana"]):
+        expanded_aliases.extend(["gaudi", "gaudi2", "guadi", "habana", "高迪"])
+
     stopwords = {
         '这个', '这么', '什么', '怎么', '怎样', '为什么', '有没有', '有没有人', '大家', '你们',
         '我们', '他们', '一个', '一下', '最近', '里面', '请问', '知道', '谁能', '有人', '可以',
@@ -100,6 +106,8 @@ def search_local_kb(query: str, kb_dir: str, max_chars: int = 2500) -> str:
                 if w not in stopwords and len(w) >= 2:
                     ch_words.add(w)
     keywords = list(en_words | ch_words)
+    if expanded_aliases:
+        keywords.extend(expanded_aliases)
 
     search_dirs = []
     if os.path.exists(kb_dir):

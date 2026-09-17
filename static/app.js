@@ -793,7 +793,9 @@ function initSSE() {
     try {
       const ev = JSON.parse(e.data);
       renderIncomingEvent(ev);
-    } catch (err) {}
+    } catch (err) {
+      console.error("[SSE Error] renderIncomingEvent failed:", err);
+    }
   };
 }
 
@@ -852,6 +854,8 @@ function renderIncomingEvent(ev) {
   
   // 3. 如果是高价值讨论且生成了建议，追加到右侧建议卡片
   if (ev.is_question && ev.advice) {
+    const draftText = extractReplyDraft(ev.advice);
+
     // 缓存该会话的最新建议
     if (sid) {
       sessionLatestAdvices[sid] = draftText;
