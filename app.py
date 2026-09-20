@@ -259,9 +259,10 @@ def regenerate_advice():
     sender = str(data.get("sender", "群友")).strip()
     sname = data.get("session_name", "")
     stype = data.get("session_type", "group")
+    sid = data.get("session_id", "")
     if not content:
         return jsonify({"status": "error", "message": "消息内容为空"}), 400
-    new_advice = core.regenerate_advice(content, sender, session_name=sname, session_type=stype)
+    new_advice = core.regenerate_advice(content, sender, session_name=sname, session_type=stype, session_id=sid)
     # 自动更新剪贴板
     try:
         import pyperclip

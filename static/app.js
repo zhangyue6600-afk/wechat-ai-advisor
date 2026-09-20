@@ -958,7 +958,8 @@ async function regenerateCardAdvice(btn, cardId) {
         content: info.content || "",
         sender: info.sender || "群友",
         session_name: info.session_name || "",
-        session_type: info.session_type || "group"
+        session_type: info.session_type || "group",
+        session_id: info.session_id || ""
       })
     });
     const data = await res.json();

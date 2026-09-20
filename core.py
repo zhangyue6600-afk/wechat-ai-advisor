@@ -51,33 +51,62 @@ def search_bing(query: str, max_results: int = 2) -> str:
     except Exception:
         return ""
 
-def search_local_kb(query: str, kb_dir: str, max_chars: int = 2500) -> str:
-    """在本地已提炼的知识库（包含结构化JSONL、技术专题、问答对）中进行深度语义+时间感知检索"""
+# 算力、大模型与硬件领域同义词扩展图谱 (Domain Synonym Clusters)
+DOMAIN_SYNONYM_CLUSTERS = [
+    # 显存/内存溢出与报错
+    {"oom", "out of memory", "显存溢出", "爆显存", "显存不足", "cuda oom", "内存溢出", "cuda error"},
+    # 卡死/挂起/超时/假死
+    {"卡死", "hang", "挂起", "堵塞", "假死", "死锁", "timeout", "超时", "不响应", "僵死", "卡住"},
+    # 多卡通信与互联拓扑
+    {"通信", "nccl", "nvlink", "pcie", "numa", "多卡", "分布式", "tp", "pp", "tensor parallel", "pipeline parallel", "跨机", "rdma", "roce", "通信报错", "拓扑"},
+    # 量化与显存优化
+    {"量化", "awq", "gptq", "fp8", "int4", "int8", "gguf", "bnb", "bitsandbytes", "smoothquant", "显存优化"},
+    # 主流大模型推理框架
+    {"vllm", "sglang", "ollama", "tgi", "triton", "deepspeed", "lightllm", "llama.cpp", "mindie"},
+    # 芯片与加速卡硬件型号 (含高频错别字)
+    {"gaudi", "gaudi2", "guadi", "guadi2", "高迪", "高迪2", "habana", "hl-225", "hl225"},
+    {"4090", "rtx4090", "4090d", "魔改4090", "涡轮4090", "4090涡轮"},
+    {"3090", "rtx3090", "3090ti", "魔改3090", "涡轮3090", "24g显存"},
+    {"h100", "a100", "h800", "a800", "sxm", "sxm5", "pcie版"},
+    {"910b", "昇腾", "ascend", "cann", "华为算力", "910", "atlas"},
+    {"mi250", "mi300", "mi300x", "rocm", "amd"},
+    {"富士通", "浪潮", "超微", "戴尔", "准系统", "机架", "工控机", "服务器主板"},
+    # 二手行情与交易行话
+    {"多少钱", "出", "收", "收卡", "出卡", "底价", "行情", "二手", "箱说", "成色", "保修", "挂牌", "倒爷", "屯卡", "转让"}
+]
+
+CORE_HIGH_WEIGHT_TERMS = {
+    "gaudi2", "gaudi", "guadi", "guadi2", "habana", "vllm", "sglang", "nccl", "nvlink", "fp8", "awq",
+    "oom", "numa", "pcie", "4090", "3090", "h100", "a100", "910b", "昇腾", "mi250", "rocm", "rdma",
+    "out of memory", "爆显存", "显存溢出", "卡死", "hang", "准系统", "富士通", "浪潮", "超微", "魔改"
+}
+
+def search_local_kb(query: str, kb_dir: str, max_chars: int = 2800) -> str:
+    """在本地已提炼的知识库（包含动态热沉淀、五维专题、结构化JSONL、问答对）中进行深度语义+时间感知检索"""
     if not query or not query.strip():
         return ""
 
-    # 智能硬件错别字/别名自动扩展 (例如把 guadi/guadi2 映射为 gaudi/gaudi2/habana)
     q_lower = query.lower()
-    expanded_aliases = []
-    if any(k in q_lower for k in ["guadi", "gaudi", "高迪", "habana"]):
-        expanded_aliases.extend(["gaudi", "gaudi2", "guadi", "habana", "高迪"])
+    expanded_aliases = set()
+
+    # 1. 基于算力领域同义词图谱进行智能双向泛化
+    for cluster in DOMAIN_SYNONYM_CLUSTERS:
+        if any(term in q_lower for term in cluster):
+            expanded_aliases.update(cluster)
 
     stopwords = {
         '这个', '这么', '什么', '怎么', '怎样', '为什么', '有没有', '有没有人', '大家', '你们',
         '我们', '他们', '一个', '一下', '最近', '里面', '请问', '知道', '谁能', '有人', '可以',
         '觉得', '觉得呢', '有谁', '说说', '哪些', '这些', '那些', '是不是', '听说', '据说',
-        '聊过', '说是有', '知不知道', '一下这个', '有价值', '信息', '内容'
+        '聊过', '说是有', '知不知道', '一下这个', '有价值', '信息', '内容', '一下'
     }
 
-    # 1. 识别时间意图
+    # 2. 识别时间意图
     today = datetime.date.today()
-    # 获取今天是星期几 (0=周一, 6=周日)
     cur_weekday = today.weekday()
     target_dates = set()
 
-    # 计算最近的周末 (周六和周日)
     if any(w in query for w in ['周末', '周六', '周日', '周天', '星期六', '星期天', '星期日']):
-        # 上一个周日
         last_sunday = today - datetime.timedelta(days=(cur_weekday + 1) % 7) if cur_weekday != 6 else today
         last_saturday = last_sunday - datetime.timedelta(days=1)
         target_dates.add(last_saturday.strftime('%Y-%m-%d'))
@@ -93,7 +122,7 @@ def search_local_kb(query: str, kb_dir: str, max_chars: int = 2500) -> str:
     if '今天' in query:
         target_dates.add(today.strftime('%Y-%m-%d'))
 
-    # 2. 提取中英文实体/核心关键词 (支持中文字段 n-gram 切割，解决无空格分词失效问题)
+    # 3. 提取中英文实体/核心关键词 (支持中文字段 n-gram 切割，解决无空格分词失效问题)
     en_words = set(re.findall(r'[a-zA-Z0-9_\-\.]{2,}', query))
     ch_blocks = re.findall(r'[一-龥]+', query)
     ch_words = set()
@@ -105,9 +134,18 @@ def search_local_kb(query: str, kb_dir: str, max_chars: int = 2500) -> str:
                 w = block[i:i+n]
                 if w not in stopwords and len(w) >= 2:
                     ch_words.add(w)
-    keywords = list(en_words | ch_words)
-    if expanded_aliases:
-        keywords.extend(expanded_aliases)
+    keywords = list(en_words | ch_words | expanded_aliases)
+
+    def calc_content_score(content_text: str) -> float:
+        c_low = content_text.lower()
+        score = 0.0
+        for kw in keywords:
+            kw_low = kw.lower()
+            cnt = c_low.count(kw_low)
+            if cnt > 0:
+                base_w = 10.0 if kw_low in CORE_HIGH_WEIGHT_TERMS else 2.5
+                score += cnt * base_w
+        return score
 
     search_dirs = []
     if os.path.exists(kb_dir):
@@ -133,13 +171,13 @@ def search_local_kb(query: str, kb_dir: str, max_chars: int = 2500) -> str:
                         if not line.strip(): continue
                         qa_obj = json.loads(line)
                         combined = qa_obj.get('question','') + "\n" + qa_obj.get('solution','')
-                        score = sum(combined.lower().count(w.lower()) for w in keywords) if keywords else 0
+                        score = calc_content_score(combined)
                         if score > 0:
-                            matches.append((score * 3.0, f"\xe3\x80\x90\xf0\x9f\x8e\xaf \xe7\xb2\xbe\xe9\x80\x89\xe6\x8a\x80\xe6\x9c\xafFAQ\xe9\x97\xae\xe7\xad\x94\xe5\xaf\xb9\xe3\x80\x91\n\xe9\x97\xae: {qa_obj.get('question','')}\n\xe7\xad\x94: {qa_obj.get('solution','')}"))
+                            matches.append((score * 3.5, f"【🎯 精选技术FAQ问答对】\n问: {qa_obj.get('question','')}\n答: {qa_obj.get('solution','')}"))
             except Exception:
                 pass
 
-        # B. 检索五维立体知识库与技术专题手册 Markdown
+        # B. 检索五维立体知识库（含 05_动态热沉淀_今日实战速记）与技术专题手册 Markdown
         target_md_patterns = [
             os.path.join(s_dir, "00_五维立体知识库/*.md"),
             os.path.join(s_dir, "00_技术专题与避坑指南/*.md")
@@ -147,20 +185,23 @@ def search_local_kb(query: str, kb_dir: str, max_chars: int = 2500) -> str:
         for pattern in target_md_patterns:
             for md_file in glob.glob(pattern):
                 try:
+                    fname = os.path.basename(md_file)
                     with open(md_file, "r", encoding="utf-8", errors="ignore") as f:
                         content = f.read()
-                    score = sum(content.lower().count(w.lower()) for w in keywords) if keywords else 0
+                    score = calc_content_score(content)
                     if score > 0:
                         paragraphs = content.split("\n\n")
                         best_p = ""
                         best_score = 0
                         for p in paragraphs:
-                            ps = sum(p.lower().count(w.lower()) for w in keywords)
-                            if ps > best_score and len(p.strip()) > 25:
+                            ps = calc_content_score(p)
+                            if ps > best_score and len(p.strip()) > 20:
                                 best_score = ps
                                 best_p = p.strip()
                         if best_p:
-                            matches.append((best_score * 3.0, f"【📖 知识库专卷: {os.path.basename(md_file)}】\n{best_p}"))
+                            # 动态热沉淀记忆与避坑手册给予更高的权威权重
+                            doc_mult = 4.5 if "05_动态热沉淀" in fname or "避坑" in fname else 3.5
+                            matches.append((best_score * doc_mult, f"【📖 知识库专卷: {fname}】\n{best_p}"))
                 except Exception:
                     pass
 
@@ -182,25 +223,16 @@ def search_local_kb(query: str, kb_dir: str, max_chars: int = 2500) -> str:
                                 s_name = m.get("source_name") or m.get("_source_name") or "群聊"
                                 sender = m.get("sender_name") or m.get("sender") or "群友"
 
-                                score = 0.0
-                                # 时间过滤与加权
+                                score = calc_content_score(c)
                                 if target_dates:
                                     if not any(td in t_str for td in target_dates):
                                         continue
-                                    score += 15.0
+                                    score += 20.0
                                     if len(c) > 20:
-                                        score += 5.0
-
-                                # 关键词加权
-                                if keywords:
-                                    c_lower = c.lower()
-                                    for kw in keywords:
-                                        if kw.lower() in c_lower:
-                                            weight = 5.0 if kw in ("猫哥", "tcat", "显卡", "富士通", "v100", "gaudi2", "mi250", "p800", "屯卡") else 1.5
-                                            score += weight
+                                        score += 8.0
 
                                 if score > 0:
-                                    clean_c = c.replace('\n', ' ')[:160]
+                                    clean_c = c.replace('\n', ' ')[:180]
                                     matches.append((score, f"[{s_name}] [{t_str}] {sender}: {clean_c}"))
                     except Exception:
                         pass
@@ -301,6 +333,9 @@ class WeChatAdvisorCore:
         self._nickname_cache = {}
         self._contact_map = {}
         self._name2id_map = {}
+        # 会话多方连续发言滑动窗口 (保留各群最近 12 条发言，用于多轮上下文与纠错立威)
+        import collections
+        self.session_thread_buffers = collections.defaultdict(lambda: collections.deque(maxlen=12))
         self.distillation_progress = {
             "is_running": False,
             "status": "idle",
@@ -319,6 +354,151 @@ class WeChatAdvisorCore:
         self.config_path = os.path.join(self.data_dir, "config.json")
         self._load_config()
         self._init_db()
+
+    def append_thread_message(self, session_id: str, sender: str, content: str, time_str: str = ""):
+        """追加一条消息进入该群聊/私聊的实时滑动上下文队列"""
+        if not time_str:
+            time_str = datetime.datetime.now().strftime("%H:%M:%S")
+        self.session_thread_buffers[session_id].append({
+            "sender": sender,
+            "content": content,
+            "time": time_str
+        })
+
+    def get_thread_context_str(self, session_id: str, max_msgs: int = 8) -> str:
+        """获取当前会话最近的多方连续对话流，保留多人发言语境"""
+        buf = self.session_thread_buffers.get(session_id)
+        if not buf:
+            return ""
+        items = list(buf)[-max_msgs:]
+        if len(items) <= 1:
+            return ""
+        lines = []
+        for it in items:
+            lines.append(f"[{it['time']}] {it['sender']}: {it['content']}")
+        return "\n".join(lines)
+
+    def try_get_message_image_base64(self, msg: dict, user_id: str = "") -> Optional[str]:
+        """尝试从微信 4.x 本地存储目录定位并解密图片，转换为 Base64 直通 Gemini 多模态视觉引擎"""
+        try:
+            mtype = msg.get("type_code") or msg.get("local_type") or msg.get("type")
+            raw_c = str(msg.get("content", ""))
+            if mtype not in (3, "3", "image") and "[群友分享了图片" not in raw_c and "<img" not in raw_c:
+                return None
+
+            img_md5 = msg.get("md5")
+            if not img_md5:
+                m = re.search(r"([0-9a-fA-F]{32})", raw_c)
+                if m:
+                    img_md5 = m.group(1).lower()
+
+            account_dir = None
+            if self.db and hasattr(self.db, "account_dir") and self.db.account_dir:
+                account_dir = self.db.account_dir
+            if not account_dir:
+                for cand_base in [r"E:\D盘\xwechat_files", r"D:\xwechat_files", r"C:\Users\Admin\Documents\xwechat_files"]:
+                    if os.path.exists(cand_base):
+                        for sub in os.listdir(cand_base):
+                            if sub.startswith("wxid_") and os.path.exists(os.path.join(cand_base, sub, "msg", "attach")):
+                                account_dir = os.path.join(cand_base, sub)
+                                break
+                    if account_dir:
+                        break
+
+            if not account_dir:
+                return None
+
+            attach_base = os.path.join(account_dir, "msg", "attach")
+            if not os.path.exists(attach_base):
+                return None
+
+            target_dat = None
+            ctime = msg.get("create_time") or msg.get("time") or int(time.time())
+            month_str = time.strftime("%Y-%m", time.localtime(ctime))
+
+            chat_md5s = []
+            if user_id:
+                chat_md5s.append(hashlib.md5(user_id.encode()).hexdigest())
+
+            if img_md5:
+                search_roots = [os.path.join(attach_base, cmd5) for cmd5 in chat_md5s] if chat_md5s else [attach_base]
+                for sroot in search_roots:
+                    if not os.path.exists(sroot):
+                        continue
+                    for cand_name in [f"{img_md5}_t.dat", f"{img_md5}_h.dat", f"{img_md5}.dat"]:
+                        for r, _, files in os.walk(sroot):
+                            if cand_name in files:
+                                target_dat = os.path.join(r, cand_name)
+                                break
+                        if target_dat:
+                            break
+                    if target_dat:
+                        break
+
+            if not target_dat and chat_md5s:
+                latest_chat_dir = os.path.join(attach_base, chat_md5s[0], month_str, "Img")
+                if os.path.exists(latest_chat_dir):
+                    dats = glob.glob(os.path.join(latest_chat_dir, "*_t.dat")) or glob.glob(os.path.join(latest_chat_dir, "*.dat"))
+                    if dats:
+                        dats.sort(key=os.path.getmtime, reverse=True)
+                        target_dat = dats[0]
+
+            if not target_dat or not os.path.exists(target_dat):
+                return None
+
+            with open(target_dat, "rb") as f:
+                data = f.read()
+            if len(data) < 16:
+                return None
+
+            decrypted_bytes = None
+            tail_x, tail_y = data[-2], data[-1]
+            xor_key = tail_x ^ 0xFF
+            if (tail_y ^ 0xD9) == xor_key:
+                head = bytes(b ^ xor_key for b in data[:4])
+                if head[:2] == b"\xff\xd8":
+                    decrypted_bytes = bytes(b ^ xor_key for b in data)
+
+            if not decrypted_bytes:
+                for cand in (0x88, 0x30, 0xFF, 0xE9):
+                    head = bytes(b ^ cand for b in data[:4])
+                    if head[:2] == b"\xff\xd8" or head[:4] == b"\x89PNG":
+                        decrypted_bytes = bytes(b ^ cand for b in data)
+                        break
+
+            if decrypted_bytes:
+                import base64
+                return base64.b64encode(decrypted_bytes).decode("ascii")
+        except Exception:
+            pass
+        return None
+
+    def append_hot_memory(self, session_name: str, sender: str, question: str, advice_text: str):
+        """将实时监控中生成的高质量专家避坑与解决方案动态沉淀至热记忆池中"""
+        try:
+            target_hot_files = []
+            if os.path.exists(self.data_dir):
+                for d in os.listdir(self.data_dir):
+                    full_d = os.path.join(self.data_dir, d)
+                    if os.path.isdir(full_d) and (d.endswith("_AI知识库") or "知识库" in d):
+                        hpath = os.path.join(full_d, "00_五维立体知识库", "05_动态热沉淀_今日实战速记.md")
+                        if os.path.exists(os.path.dirname(hpath)):
+                            target_hot_files.append(hpath)
+
+            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            entry_text = f"\n### ⚡ [{now_str}] 会话: {session_name} | 发言人: {sender}\n"
+            entry_text += f"- **群友求助/现场议题**：{question}\n"
+            first_part = advice_text.split("👤")[0].replace("🎯【推荐回复草稿】", "").strip() if "👤" in advice_text else advice_text[:250]
+            entry_text += f"- **军师沉淀方案**：{first_part}\n---\n"
+
+            for hpath in target_hot_files:
+                try:
+                    with open(hpath, "a", encoding="utf-8") as f:
+                        f.write(entry_text)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _load_config(self):
         if os.path.exists(self.config_path):
@@ -1152,6 +1332,12 @@ class WeChatAdvisorCore:
         with open(slang_path, "w", encoding="utf-8") as f:
             f.write(f"# {clean_title} · 圈内特有黑话与隐语暗号词典\n\n" + (profiles_content if profiles_content else "（未启用全量深度蒸馏）\n"))
 
+        # 卷五：动态热沉淀·今日实战速记
+        hot_path = os.path.join(d5_dir, "05_动态热沉淀_今日实战速记.md")
+        if not os.path.exists(hot_path):
+            with open(hot_path, "w", encoding="utf-8") as f:
+                f.write(f"# {clean_title} · 动态热沉淀今日实战速记\n\n> 本文件由实时监听自动动态追加，即时沉淀群内最新攻坚经验与避坑解法。\n\n---\n\n")
+
         # 同步兼容历史路径：00_技术专题与避坑指南/01_多群聚合实测经验与避坑指南.md
         qa_doc_path = os.path.join(kb_path, "00_技术专题与避坑指南", "01_多群聚合实测经验与避坑指南.md")
         with open(qa_doc_path, "w", encoding="utf-8") as f:
@@ -1283,28 +1469,40 @@ class WeChatAdvisorCore:
             history = history[-max_msgs:]
         return "\n".join(history)
 
-    def call_llm_advice(self, question: str, sender: str = "群友", session_name: str = "", session_type: str = "group", force_creative: bool = False) -> str:
-        """调用用户配置的大模型生成专家建议：结合本地知识库高权置信度 + 联网搜索补充"""
+    def call_llm_advice(
+        self,
+        question: str,
+        sender: str = "群友",
+        session_name: str = "",
+        session_type: str = "group",
+        session_id: str = "",
+        image_base64: Optional[str] = None,
+        force_creative: bool = False
+    ) -> str:
+        """调用用户配置的大模型生成专家建议：融合多方滑动语境 + 本地知识库高权重检索 + 多模态看图直通 + 纠错立威"""
         api_url = self.llm_config.get("api_url", "").strip()
         api_key = self.llm_config.get("api_key", "").strip()
         model = self.llm_config.get("model", "deepseek-chat").strip()
         
-        # 1. 本地知识库高权重智能检索 (自动检索当前会话库与综合知识库)
+        # 1. 本地知识库高权重智能检索 (自动检索当前会话库、综合知识库及动态热沉淀)
         kb_info = ""
         if os.path.exists(self.data_dir):
             for d in os.listdir(self.data_dir):
                 full_d = os.path.join(self.data_dir, d)
                 if os.path.isdir(full_d) and (d.endswith("_AI知识库") or "知识库" in d):
-                    kb_part = search_local_kb(question, full_d, max_chars=800)
+                    kb_part = search_local_kb(question, full_d, max_chars=1200)
                     if kb_part:
                         kb_info += f"\n{kb_part}\n"
-                        if len(kb_info) >= 1200:
+                        if len(kb_info) >= 1600:
                             break
         
         # 2. 深入知识库提取该发言人真实画像与历史言行轨迹
         sender_history = self.get_sender_history(sender, max_msgs=6)
 
-        # 3. 联网搜索兜底补充
+        # 3. 提取当前会话最近的多方连续对话流 (滑动上下文窗口)
+        thread_context = self.get_thread_context_str(session_id, max_msgs=8) if session_id else ""
+
+        # 4. 联网搜索兜底补充
         web_info = ""
         if len(kb_info) < 80:
             web_info = search_bing(question, max_results=2)
@@ -1312,13 +1510,17 @@ class WeChatAdvisorCore:
         system_prompt = (
             "你是隐身于微信背后的顶级“超级个人军师”与资深技术战略架构师。\n"
             "你的使命是：让聊天记录如同血肉一样融入你的认知，无所不知，洞悉群内生态、懂人情世故、精通专业知识，为软件使用者提供降维打击级的超凡辅助。\n\n"
-            "请严格按照以下【4大核心模块】组织卡片输出内容（层次清晰，干货拉满，严禁任何AI客服八股文与多余客套）：\n\n"
+            "请严格按照以下【5大核心模块】组织卡片输出内容（层次清晰，干货拉满，严禁任何AI客服八股文与多余客套）：\n\n"
             "🎯【推荐回复草稿】\n"
             "（核心直接先给答案！深度模仿群内真实资深老玩家与高手的沟通风格：自然、内行、不做作、懂人情世故，可直接按 Ctrl+V 发送）\n\n"
             "👤【发言人画像与群内定位】\n"
             "（立体还原：他是个什么样的人？在群里处于什么角色生态位（如技术老兵/小白求助/倒买倒卖/折腾党/潜水员）？最近在折腾什么具体硬件、卡型或项目？）\n\n"
             "🔍【意图剖析与潜台词拆解】\n"
             "（结合该角色画像与本次发言深度透视：他表面这句话背后在想什么？潜台词是什么？真实意图与目的是什么（技术摸底/试探底价/求助/吹水/情绪发泄）？）\n\n"
+            "🛡️【群内局势透视与纠错立威建议】\n"
+            "（结合现场多方群友连续发言流：\n"
+            "- 敏锐洞察群内局势，若有其他群友给出了外行、有风险（如显存爆卡/锁死吞吐/硬件烧毁）或误导性的方案，必须在此精准指出其方案硬伤与漏洞；\n"
+            "- 给出【一针见血的纠错立威切入点】，帮使用者在群聊中确立不可动摇的权威架构师地位；若暂无误导发言，则指出当前讨论的共识与关键分歧。）\n\n"
             "🧠【专家推演与思考过程】\n"
             "（结合知识库里的历史上下文、真实踩坑血泪史与技术原理，为使用者呈现完整的专家决策推演逻辑与避坑参考指南。）"
         )
@@ -1327,6 +1529,10 @@ class WeChatAdvisorCore:
         user_prompt += f"【当前发言人】：{sender}\n"
         user_prompt += f"【当前发言内容】：\n“{question}”\n"
         
+        if thread_context:
+            user_prompt += f"\n【当前群聊多方连续发言流（现场上下文语境）】：\n{thread_context}\n"
+        if image_base64:
+            user_prompt += f"\n【群友发送了报错截图/系统截屏/拓扑图，已由多模态视觉直通装载，请仔细分析截图中的报错行、参数或显存状况】\n"
         if sender_history:
             user_prompt += f"\n【发言人「{sender}」的历史发言轨迹与近期动向】：\n{sender_history}\n"
         if kb_info:
@@ -1334,7 +1540,7 @@ class WeChatAdvisorCore:
         if web_info:
             user_prompt += f"\n【全网最新情报补充参考】：\n{web_info}\n"
             
-        user_prompt += "\n请按照 4 大核心模块输出你的超级军师研判卡片："
+        user_prompt += "\n请按照 5 大核心模块输出你的超级军师研判卡片："
         
         headers = {"Content-Type": "application/json"}
         if api_key:
@@ -1347,28 +1553,50 @@ class WeChatAdvisorCore:
                 temp = float(self.llm_config.get("temperature", 0.7))
                 if force_creative:
                     temp = min(1.0, temp + 0.25)
+
+                # 构造支持多模态视觉请求的 content
+                if image_base64:
+                    user_content_payload = [
+                        {"type": "text", "text": user_prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
+                    ]
+                else:
+                    user_content_payload = user_prompt
+
                 payload = {
                     "model": model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
+                        {"role": "user", "content": user_content_payload}
                     ],
                     "temperature": temp,
-                    "max_tokens": 1200
+                    "max_tokens": 1500
                 }
-                resp = requests.post(url, headers=headers, json=payload, timeout=25, proxies=proxies)
-                if resp.status_code == 200:
+                
+                resp = None
+                try:
+                    resp = requests.post(url, headers=headers, json=payload, timeout=30, proxies=proxies)
+                except Exception:
+                    # 若带图请求因网络或超时失败，尝试降级为纯文本请求
+                    if image_base64:
+                        payload["messages"][1]["content"] = user_prompt
+                        resp = requests.post(url, headers=headers, json=payload, timeout=25, proxies=proxies)
+
+                # 如果模型不支持 vision 返回 400，自动降级为纯文本重发
+                if resp is not None and resp.status_code == 400 and image_base64:
+                    payload["messages"][1]["content"] = user_prompt
+                    resp = requests.post(url, headers=headers, json=payload, timeout=25, proxies=proxies)
+
+                if resp is not None and resp.status_code == 200:
                     data = resp.json()
                     msg = data["choices"][0]["message"]
                     content = (msg.get("content") or "").strip()
                     reasoning = (msg.get("reasoning") or msg.get("reasoning_content") or "").strip()
                     
                     ans = ""
-                    # 优先提取 content
                     if content:
                         ans = content
                     elif reasoning:
-                        # 如果 content 为空只有 reasoning，且为中文，尝试提取中文文本，绝不能返回英文思维链！
                         ch_chars = re.findall(r"[一-龥]", reasoning)
                         if len(ch_chars) >= 15:
                             quotes = re.findall(r'["\u201c\u201d\u300c\u300d]([^"\u201c\u201d\u300c\u300d]+)["\u201c\u201d\u300c\u300d]', reasoning)
@@ -1380,8 +1608,9 @@ class WeChatAdvisorCore:
                                 
                     if ans:
                         clean_ans = ans.strip().strip("“”\"'")
-                        # 过滤纯英文漏网之鱼
                         if len(re.findall(r"[一-龥]", clean_ans)) >= 2:
+                            # 自动将高价值建议追加沉淀到动态热记忆池中
+                            self.append_hot_memory(session_name or "群聊", sender, question, clean_ans)
                             return clean_ans
             except Exception as e:
                 print(f"[LLM调用异常, 进入知识库兜底]: {e}")
@@ -1410,9 +1639,9 @@ class WeChatAdvisorCore:
             return "建议把 --gpu-memory-utilization 压到 0.85 给动态 KV 留够冗余；同时限制 --max-model-len 上下文。TP 张量并行确保切分为 2 的整次幂。"
         return "建议重点排查一下显卡架构算力支持、CUDA 驱动版本与 PyTorch wheel 的匹配情况，贴一下具体报错堆栈更容易定位。"
 
-    def regenerate_advice(self, content: str, sender: str = "群友", session_name: str = "", session_type: str = "group") -> str:
+    def regenerate_advice(self, content: str, sender: str = "群友", session_name: str = "", session_type: str = "group", session_id: str = "") -> str:
         """对已生成的回复不满意时，重新调用大模型换一个角度生成"""
-        return self.call_llm_advice(content, sender, session_name=session_name, session_type=session_type, force_creative=True)
+        return self.call_llm_advice(content, sender, session_name=session_name, session_type=session_type, session_id=session_id, force_creative=True)
 
     def start_monitoring(self, sessions, room_name: str = "", enable_clipboard: bool = True, enable_chime: bool = True) -> dict:
         """启动多会话并发监听 (支持同时监听多个群聊 + 个人好友私聊)"""
@@ -1458,15 +1687,26 @@ class WeChatAdvisorCore:
                     sender_nick = self.get_cached_nickname(sender_id) or msg.get("sender_username") or "群友"
                     
                 now_str = datetime.datetime.now().strftime("%H:%M:%S")
+
+                # 无论是否触发建议，将本条发言压入滑动上下文队列（保留多方对话流供分析纠错）
+                self.append_thread_message(session_info["id"], sender_nick, content, now_str)
+
                 is_valuable, intent_desc = self.analyze_intent(content, session_type=session_info["type"])
                 
                 advice = ""
                 if is_valuable:
+                    # 尝试通过本地图片存储解密获取 Base64（多模态视觉直通）
+                    img_b64 = None
+                    if "[群友分享了图片" in content or msg.get("type_code") in (3, "3"):
+                        img_b64 = self.try_get_message_image_base64(msg, session_info["id"])
+
                     advice = self.call_llm_advice(
                         content, 
                         sender_nick, 
                         session_name=session_info["name"],
-                        session_type=session_info["type"]
+                        session_type=session_info["type"],
+                        session_id=session_info["id"],
+                        image_base64=img_b64
                     )
                     if enable_chime:
                         try:
