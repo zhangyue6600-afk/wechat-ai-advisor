@@ -6,9 +6,10 @@ import os
 import sys
 import json
 import queue
+import hashlib
 import datetime
 import threading
-from flask import Flask, render_template, request, jsonify, Response, send_from_directory
+from flask import Flask, render_template, request, jsonify, Response, send_from_directory, redirect
 from core import WeChatAdvisorCore
 
 if getattr(sys, 'frozen', False):
@@ -23,7 +24,40 @@ core = WeChatAdvisorCore(data_dir=os.path.join(os.path.dirname(sys.executable) i
 
 @app.route("/")
 def index():
+    # 自动识别移动端 User-Agent，自动分流至手机专属界面
+    force_desktop = request.args.get("desktop") == "1"
+    ua = request.headers.get("User-Agent", "").lower()
+    is_mobile = any(k in ua for k in ["mobile", "android", "iphone", "ipad", "phone", "harmonyos"])
+    if is_mobile and not force_desktop:
+        return render_template("mobile.html")
     return render_template("index.html")
+
+@app.route("/m")
+@app.route("/mobile")
+def mobile_view():
+    """手机专属轻量控场端"""
+    return render_template("mobile.html")
+
+@app.route("/api/auth/verify", methods=["POST"])
+def verify_mobile_pin():
+    """手机端访问口令校验（安全锁）"""
+    data = request.json or {}
+    pin = str(data.get("pin", "")).strip()
+    correct_pin = str(core.llm_config.get("mobile_pin", "668899")).strip()
+    if not correct_pin or pin == correct_pin:
+        token = hashlib.sha256(f"{correct_pin}_salt_advisor".encode()).hexdigest()[:16]
+        return jsonify({"status": "success", "token": token})
+    return jsonify({"status": "error", "message": "口令错误，请重新输入"}), 403
+
+@app.route("/api/auth/check", methods=["GET"])
+def check_auth():
+    """检查当前设备是否已经通过口令认证"""
+    correct_pin = str(core.llm_config.get("mobile_pin", "668899")).strip()
+    if not correct_pin:
+        return jsonify({"auth_required": False, "valid": True})
+    token = request.headers.get("X-Access-Token") or request.args.get("token", "")
+    expected = hashlib.sha256(f"{correct_pin}_salt_advisor".encode()).hexdigest()[:16]
+    return jsonify({"auth_required": True, "valid": token == expected})
 
 @app.route("/api/wechat/status", methods=["GET"])
 def wechat_status():
@@ -38,6 +72,7 @@ def manage_config():
         api_key = data.get("api_key", "").strip()
         model = data.get("model", "deepseek-chat").strip()
         temp = float(data.get("temperature", 0.7))
+        mobile_pin = str(data.get("mobile_pin", core.llm_config.get("mobile_pin", "668899"))).strip()
         
         test_ok, test_msg = True, "已跳过连通测试"
         if data.get("test_now", False):
@@ -49,7 +84,8 @@ def manage_config():
             "api_url": api_url,
             "api_key": api_key,
             "model": model,
-            "temperature": temp
+            "temperature": temp,
+            "mobile_pin": mobile_pin
         })
         return jsonify({"status": "success", "message": "配置已保存", "test_msg": test_msg})
     
@@ -299,6 +335,9 @@ def sse_events():
 if __name__ == "__main__":
     print("=========================================================")
     print("🚀 微信群AI军师 · WeChat-AI-Advisor 已启动！")
-    print("👉 请在浏览器中打开: http://127.0.0.1:5000")
+    print("💻 电脑管理端: http://127.0.0.1:5000")
+    print("📱 手机端访问: http://127.0.0.1:5000/m")
+    print("🌐 局域网直连: http://192.168.5.56:5000/m (手机连同WiFi秒开)")
+    print("🔒 手机访问默认口令: 668899 (可在管理端修改)")
     print("=========================================================")
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=False)

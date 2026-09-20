@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#020617">
+  <title>AI 军师 · 掌上控场端</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* 移动端专属触控与防误触优化 */
+    * {
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    body {
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    .scrollbar-none::-webkit-scrollbar {
+      display: none;
+    }
+    .scrollbar-none {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    /* 触觉按压动效 */
+    .btn-press:active {
+      transform: scale(0.97);
+      opacity: 0.9;
+    }
+    .toast-anim {
+      animation: slideDown 0.3s ease-out forwards;
+    }
+    @keyframes slideDown {
+      from { transform: translate(-50%, -100%); opacity: 0; }
+      to { transform: translate(-50%, 0); opacity: 1; }
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased flex flex-col selection:bg-indigo-500 selection:text-white pb-20">
+
+  <!-- 浮动通知 Toast (复制成功/状态提示) -->
+  <div id="toast" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 hidden px-4 py-2.5 rounded-full bg-emerald-500/90 text-white text-xs font-bold shadow-2xl backdrop-blur-md flex items-center space-x-2 toast-anim">
+    <span id="toast-icon">✅</span>
+    <span id="toast-text">已复制到剪贴板</span>
+  </div>
+
+  <!-- 口令安全锁弹窗 (仅未认证时显示) -->
+  <div id="auth-modal" class="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 hidden">
+    <div class="w-full max-w-xs bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4 text-center">
+      <div class="w-12 h-12 rounded-2xl bg-indigo-600/20 border border-indigo-500/30 mx-auto flex items-center justify-center text-2xl">
+        🐱
+      </div>
+      <div>
+        <h3 class="text-base font-bold text-white">微信群 AI 军师</h3>
+        <p class="text-xs text-slate-400 mt-1">此终端已接入内网加密穿透<br>请输入访问口令解锁控场</p>
+      </div>
+      <div class="space-y-2">
+        <input type="password" id="pin-input" inputmode="numeric" placeholder="输入访问口令" class="w-full text-center tracking-widest text-lg py-2.5 px-3 rounded-xl bg-slate-950 border border-slate-700 text-white focus:border-indigo-500 focus:outline-none">
+        <p class="text-[11px] text-slate-500">初始默认口令：668899</p>
+      </div>
+      <button onclick="submitPin()" class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm btn-press transition shadow-lg shadow-indigo-600/30">
+        🔓 验证并进入
+      </button>
+      <div id="pin-error" class="text-xs text-rose-400 font-medium hidden">口令错误，请重新输入</div>
+    </div>
+  </div>
+
+  <!-- 顶部状态栏 -->
+  <header class="sticky top-0 z-40 bg-slate-900/80 backdrop-blur-lg border-b border-slate-800/80 px-4 py-2.5 flex items-center justify-between">
+    <div class="flex items-center space-x-2">
+      <span class="text-xl">🐱</span>
+      <div>
+        <div class="flex items-center space-x-1.5">
+          <span class="text-sm font-bold text-white tracking-tight">AI 军师</span>
+          <span class="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono">v1.9</span>
+        </div>
+        <div class="flex items-center space-x-1 text-[10px] text-slate-400">
+          <span id="conn-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span id="conn-text">0.8s 监控中</span>
+        </div>
+      </div>
+    </div>
+    <div class="flex items-center space-x-2">
+      <a href="/?desktop=1" class="text-xs px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 font-medium btn-press flex items-center space-x-1">
+        <span>💻</span><span>电脑版</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- 会话滑动选择滑轨 (Pill Tabs) -->
+  <div class="bg-slate-900/40 border-b border-slate-800/60 px-3 py-2">
+    <div id="session-pills" class="flex items-center space-x-2 overflow-x-auto scrollbar-none">
+      <button onclick="switchMobileSession('__ALL__')" id="pill-__ALL__" class="pill-btn px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap bg-indigo-600 text-white shadow-sm border border-indigo-500/40 flex items-center space-x-1">
+        <span>🌟 全部会话</span>
+        <span id="badge-__ALL__" class="text-[10px] px-1.5 rounded-full bg-indigo-900 text-indigo-200">0</span>
+      </button>
+      <!-- 动态插入各个群的药丸 -->
+    </div>
+  </div>
+
+  <!-- 主视图容器 -->
+  <main class="flex-1 px-3 py-3 overflow-y-auto">
+
+    <!-- 视图 1：🎯 军师建议卡片 (核心主视图) -->
+    <div id="view-advices" class="space-y-3">
+      <div id="cards-list" class="space-y-3">
+        <!-- 动态建议卡片插入此处 -->
+        <div id="empty-card-hint" class="text-center py-20 text-slate-500 text-xs space-y-2">
+          <div class="text-3xl">🎯</div>
+          <div>群内出现技术求助/议题时</div>
+          <div class="text-slate-600">军师将在此秒级生成内行建议与纠错卡片...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 视图 2：📜 实时群发言流水 -->
+    <div id="view-stream" class="space-y-2 hidden">
+      <div class="text-[11px] text-slate-400 flex items-center justify-between pb-1 px-1">
+        <span id="stream-title">实时群聊动态流</span>
+        <span class="text-slate-600 font-mono">0.8s心跳</span>
+      </div>
+      <div id="stream-list" class="space-y-2 text-xs">
+        <div class="text-center py-16 text-slate-600">正在等待新消息滚动...</div>
+      </div>
+    </div>
+
+    <!-- 视图 3：💬 知识库主动直问 (掌上智囊) -->
+    <div id="view-ask" class="space-y-3 hidden">
+      <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-3.5 space-y-2.5">
+        <div class="flex items-center space-x-1.5 text-xs font-bold text-indigo-300">
+          <span>🧠</span><span>向五维本地知识库主动提问</span>
+        </div>
+        <p class="text-[11px] text-slate-400">出门在外遇到技术疑问，直接搜索并由大模型结合群内血肉经验解答：</p>
+        <div class="flex items-center space-x-2">
+          <input type="text" id="ask-input" placeholder="输入问题 (如：Gaudi2 八卡如何排障)" class="flex-1 text-xs py-2 px-3 rounded-lg bg-slate-950 border border-slate-700 text-white focus:border-indigo-500 focus:outline-none">
+          <button onclick="submitAskKb()" id="btn-ask-kb" class="px-4 py-2 rounded-lg bg-indigo-600 text-white font-bold text-xs btn-press whitespace-nowrap shadow-md shadow-indigo-600/30">
+            提问
+          </button>
+        </div>
+      </div>
+      <div id="ask-result-card" class="hidden bg-slate-900/70 border border-indigo-500/40 rounded-xl p-3.5 space-y-2 text-xs">
+        <div class="font-bold text-indigo-400 flex items-center justify-between">
+          <span>💡 知识库专家解答</span>
+          <button onclick="copyAskResult()" class="text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">复制</button>
+        </div>
+        <div id="ask-result-content" class="text-slate-200 leading-relaxed whitespace-pre-wrap font-sans"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- 底部核心单手导航栏 (Sticky Bottom) -->
+  <nav class="fixed bottom-0 left-0 right-0 z-40 bg-slate-900/90 backdrop-blur-lg border-t border-slate-800/80 px-2 py-1.5 flex items-center justify-around">
+    <button onclick="switchMobileTab('advices')" id="nav-btn-advices" class="flex-1 py-1.5 flex flex-col items-center space-y-1 text-indigo-400 btn-press">
+      <span class="text-base relative">
+        🎯
+        <span id="nav-badge-advices" class="hidden absolute -top-1 -right-2 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold">0</span>
+      </span>
+      <span class="text-[10px] font-semibold">军师建议</span>
+    </button>
+    <button onclick="switchMobileTab('stream')" id="nav-btn-stream" class="flex-1 py-1.5 flex flex-col items-center space-y-1 text-slate-400 btn-press">
+      <span class="text-base">📜</span>
+      <span class="text-[10px] font-medium">群聊流</span>
+    </button>
+    <button onclick="switchMobileTab('ask')" id="nav-btn-ask" class="flex-1 py-1.5 flex flex-col items-center space-y-1 text-slate-400 btn-press">
+      <span class="text-base">💬</span>
+      <span class="text-[10px] font-medium">问军师</span>
+    </button>
+  </nav>
+
+  <!-- 移动端逻辑脚本 -->
+  <script>
+    let activeTab = 'advices';
+    let currentSessionId = '__ALL__';
+    let sessionStore = {};
+    let cardStore = {};
+    let unreadCount = 0;
+    let authToken = localStorage.getItem('advisor_mobile_token') || '';
+
+    // 初始化安全认证检查
+    async function checkAuth() {
+      try {
+        const res = await fetch('/api/auth/check', {
+          headers: { 'X-Access-Token': authToken }
+        });
+        const data = await res.json();
+        if (data.auth_required && !data.valid) {
+          document.getElementById('auth-modal').classList.remove('hidden');
+        } else {
+          startMobileClient();
+        }
+      } catch (e) {
+        startMobileClient();
+      }
+    }
+
+    async function submitPin() {
+      const pin = document.getElementById('pin-input').value.trim();
+      const errEl = document.getElementById('pin-error');
+      errEl.classList.add('hidden');
+      try {
+        const res = await fetch('/api/auth/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pin: pin })
+        });
+        const data = await res.json();
+        if (res.ok && data.token) {
+          authToken = data.token;
+          localStorage.setItem('advisor_mobile_token', authToken);
+          document.getElementById('auth-modal').classList.add('hidden');
+          showToast('🔓 认证成功，已接入中枢');
+          startMobileClient();
+        } else {
+          errEl.innerText = data.message || '口令错误';
+          errEl.classList.remove('hidden');
+        }
+      } catch (e) {
+        errEl.innerText = '网络异常: ' + e.message;
+        errEl.classList.remove('hidden');
+      }
+    }
+
+    function showToast(text, icon = '✅') {
+      const t = document.getElementById('toast');
+      document.getElementById('toast-icon').innerText = icon;
+      document.getElementById('toast-text').innerText = text;
+      t.classList.remove('hidden');
+      // 触觉马达震动
+      if (navigator.vibrate) {
+        navigator.vibrate([30, 40, 30]);
+      }
+      setTimeout(() => {
+        t.classList.add('hidden');
+      }, 2200);
+    }
+
+    function switchMobileTab(tab) {
+      activeTab = tab;
+      ['advices', 'stream', 'ask'].forEach(t => {
+        const view = document.getElementById(`view-${t}`);
+        const btn = document.getElementById(`nav-btn-${t}`);
+        if (t === tab) {
+          view.classList.remove('hidden');
+          btn.className = 'flex-1 py-1.5 flex flex-col items-center space-y-1 text-indigo-400 btn-press font-bold';
+        } else {
+          view.classList.add('hidden');
+          btn.className = 'flex-1 py-1.5 flex flex-col items-center space-y-1 text-slate-400 btn-press font-medium';
+        }
+      });
+      if (tab === 'advices') {
+        unreadCount = 0;
+        document.getElementById('nav-badge-advices').classList.add('hidden');
+      }
+    }
+
+    function switchMobileSession(sid) {
+      currentSessionId = sid;
+      renderSessionPills();
+      filterCardsAndStream();
+    }
+
+    function renderSessionPills() {
+      const container = document.getElementById('session-pills');
+      const allBtn = document.getElementById('pill-__ALL__');
+      if (currentSessionId === '__ALL__') {
+        allBtn.className = 'pill-btn px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap bg-indigo-600 text-white shadow-sm border border-indigo-500/40 flex items-center space-x-1';
+      } else {
+        allBtn.className = 'pill-btn px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap bg-slate-900 text-slate-300 border border-slate-800 flex items-center space-x-1';
+      }
+
+      // 动态 pill 渲染
+      Object.keys(sessionStore).forEach(sid => {
+        let pill = document.getElementById(`pill-${sid.replace(/[^a-zA-Z0-9_-]/g, '_')}`);
+        const info = sessionStore[sid];
+        const isAct = currentSessionId === sid;
+        if (!pill) {
+          pill = document.createElement('button');
+          pill.id = `pill-${sid.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+          pill.onclick = () => switchMobileSession(sid);
+          container.appendChild(pill);
+        }
+        pill.className = `pill-btn px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap flex items-center space-x-1 transition ${
+          isAct ? 'bg-indigo-600 text-white border border-indigo-500/40' : 'bg-slate-900 text-slate-300 border border-slate-800'
+        }`;
+        pill.innerHTML = `
+          <span>${info.type === 'group' ? '👥' : '👤'} ${escapeHtml(info.name)}</span>
+          ${info.unread > 0 ? `<span class="text-[10px] px-1 rounded-full bg-rose-500 text-white font-bold">${info.unread}</span>` : ''}
+        `;
+      });
+    }
+
+    function filterCardsAndStream() {
+      // 过滤建议卡片
+      document.querySelectorAll('.m-advice-card').forEach(c => {
+        const cardSid = c.getAttribute('data-session-id');
+        if (currentSessionId === '__ALL__' || currentSessionId === cardSid) {
+          c.classList.remove('hidden');
+        } else {
+          c.classList.add('hidden');
+        }
+      });
+      // 过滤流
+      document.querySelectorAll('.m-stream-msg').forEach(m => {
+        const msgSid = m.getAttribute('data-session-id');
+        if (currentSessionId === '__ALL__' || currentSessionId === msgSid) {
+          m.classList.remove('hidden');
+        } else {
+          m.classList.add('hidden');
+        }
+      });
+    }
+
+    function appendAdviceCard(ev) {
+      const list = document.getElementById('cards-list');
+      const hint = document.getElementById('empty-card-hint');
+      if (hint) hint.classList.add('hidden');
+
+      const cardId = 'mcard-' + Math.random().toString(36).substring(2, 9);
+      cardStore[cardId] = ev;
+
+      const card = document.createElement('div');
+      card.id = cardId;
+      card.className = 'm-advice-card p-3.5 rounded-2xl bg-slate-900/80 border border-indigo-500/30 shadow-lg space-y-2.5 transition';
+      card.setAttribute('data-session-id', ev.session_id);
+      if (currentSessionId !== '__ALL__' && currentSessionId !== ev.session_id) {
+        card.classList.add('hidden');
+      }
+
+      // 提取核心回复草稿
+      let draft = ev.advice || '';
+      if (draft.includes('🎯【推荐回复草稿】')) {
+        const parts = draft.split('👤【发言人画像');
+        draft = parts[0].replace('🎯【推荐回复草稿】', '').trim();
+      }
+
+      card.innerHTML = `
+        <div class="flex items-center justify-between text-[11px]">
+          <div class="flex items-center space-x-1.5">
+            <span class="px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-medium">
+              ${ev.session_label} ${escapeHtml(ev.session_name)}
+            </span>
+            <span class="font-bold text-slate-200">🔔 ${escapeHtml(ev.sender)}</span>
+          </div>
+          <span class="text-[10px] text-slate-500 font-mono">${ev.time}</span>
+        </div>
+
+        <div class="text-xs text-slate-300 bg-slate-950/70 p-2.5 rounded-xl border border-slate-800">
+          “${escapeHtml(ev.content)}”
+        </div>
+
+        <div class="p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/30 text-xs text-emerald-300 font-sans leading-relaxed whitespace-pre-wrap">
+          <div class="font-bold text-emerald-400 text-[11px] mb-1">🎯 专家建议方案：</div>
+          <div class="advice-body">${escapeHtml(ev.advice || '')}</div>
+        </div>
+
+        <!-- 单手大拇指大按键操作区 -->
+        <div class="pt-1 flex items-center space-x-2">
+          <button onclick="copyCardDraft('${cardId}')" class="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs btn-press flex items-center justify-center space-x-1.5 shadow-md shadow-emerald-600/30">
+            <span>📋</span><span>一键复制并发送</span>
+          </button>
+          <button onclick="regenerateCard('${cardId}', this)" class="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs btn-press border border-slate-700">
+            <span>🔄 换一个</span>
+          </button>
+        </div>
+      `;
+
+      list.prepend(card);
+
+      if (activeTab !== 'advices') {
+        unreadCount++;
+        const nb = document.getElementById('nav-badge-advices');
+        nb.innerText = unreadCount;
+        nb.classList.remove('hidden');
+      }
+    }
+
+    function appendStreamMsg(ev) {
+      const list = document.getElementById('stream-list');
+      const item = document.createElement('div');
+      item.className = 'm-stream-msg p-2 rounded-xl bg-slate-900/50 border border-slate-800/80 flex flex-col space-y-1';
+      item.setAttribute('data-session-id', ev.session_id);
+      if (currentSessionId !== '__ALL__' && currentSessionId !== ev.session_id) {
+        item.classList.add('hidden');
+      }
+
+      item.innerHTML = `
+        <div class="flex items-center justify-between text-[10px] text-slate-400">
+          <span class="font-semibold text-indigo-300">${escapeHtml(ev.sender)} (${escapeHtml(ev.session_name)})</span>
+          <span class="font-mono text-slate-500">${ev.time}</span>
+        </div>
+        <div class="text-xs text-slate-200 break-words">${escapeHtml(ev.content)}</div>
+      `;
+      list.prepend(item);
+      if (list.children.length > 80) list.removeChild(list.lastChild);
+    }
+
+    function copyCardDraft(cardId) {
+      const ev = cardStore[cardId];
+      if (!ev || !ev.advice) return;
+      let draft = ev.advice;
+      if (draft.includes('🎯【推荐回复草稿】')) {
+        const parts = draft.split('👤【发言人画像');
+        draft = parts[0].replace('🎯【推荐回复草稿】', '').trim();
+      }
+      navigator.clipboard.writeText(draft).then(() => {
+        showToast('已复制草稿！切回微信粘贴');
+      }).catch(() => {
+        showToast('复制成功');
+      });
+    }
+
+    async function regenerateCard(cardId, btn) {
+      const ev = cardStore[cardId];
+      if (!ev) return;
+      btn.disabled = true;
+      const origText = btn.innerHTML;
+      btn.innerHTML = '<span>⏳...</span>';
+      try {
+        const res = await fetch('/api/monitor/regenerate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: ev.content,
+            sender: ev.sender,
+            session_name: ev.session_name,
+            session_type: ev.session_type,
+            session_id: ev.session_id
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.advice) {
+          ev.advice = data.advice;
+          const card = document.getElementById(cardId);
+          if (card) {
+            card.querySelector('.advice-body').innerText = data.advice;
+          }
+          copyCardDraft(cardId);
+          btn.innerHTML = '<span>✅</span>';
+          setTimeout(() => { btn.disabled = false; btn.innerHTML = origText; }, 1500);
+        } else {
+          alert('换一换失败: ' + (data.message || ''));
+          btn.disabled = false;
+          btn.innerHTML = origText;
+        }
+      } catch (e) {
+        alert('请求异常: ' + e.message);
+        btn.disabled = false;
+        btn.innerHTML = origText;
+      }
+    }
+
+    async function submitAskKb() {
+      const q = document.getElementById('ask-input').value.trim();
+      if (!q) return;
+      const btn = document.getElementById('btn-ask-kb');
+      btn.disabled = true;
+      btn.innerText = '思考中...';
+      try {
+        const res = await fetch('/api/kb/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: q })
+        });
+        const data = await res.json();
+        const card = document.getElementById('ask-result-card');
+        const content = document.getElementById('ask-result-content');
+        if (res.ok && data.answer) {
+          content.innerText = data.answer;
+          card.classList.remove('hidden');
+        } else {
+          alert('未生成解答: ' + (data.message || ''));
+        }
+      } catch (e) {
+        alert('提问异常: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '提问';
+      }
+    }
+
+    function copyAskResult() {
+      const text = document.getElementById('ask-result-content').innerText;
+      navigator.clipboard.writeText(text).then(() => showToast('已复制解答'));
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    // 启动 SSE 监听连接
+    function startMobileClient() {
+      fetch('/api/monitor/status').then(r => r.json()).then(st => {
+        if (st.sessions) {
+          st.sessions.forEach(s => {
+            sessionStore[s.id] = { name: s.name, type: s.type, unread: 0 };
+          });
+          renderSessionPills();
+        }
+      }).catch(() => {});
+
+      const es = new EventSource('/api/monitor/events');
+      es.onmessage = function(e) {
+        if (!e.data || e.data.startsWith(':')) return;
+        try {
+          const ev = JSON.parse(e.data);
+          if (ev.session_id && !sessionStore[ev.session_id]) {
+            sessionStore[ev.session_id] = { name: ev.session_name, type: ev.session_type, unread: 0 };
+            renderSessionPills();
+          }
+          appendStreamMsg(ev);
+          if (ev.is_question && ev.advice) {
+            appendAdviceCard(ev);
+          }
+        } catch (err) {}
+      };
+      es.onerror = function() {
+        document.getElementById('conn-dot').className = 'w-1.5 h-1.5 rounded-full bg-rose-400';
+        document.getElementById('conn-text').innerText = '重连中...';
+      };
+      es.onopen = function() {
+        document.getElementById('conn-dot').className = 'w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse';
+        document.getElementById('conn-text').innerText = '0.8s 监控中';
+      };
+    }
+
+    // 页面加载启动
+    window.addEventListener('DOMContentLoaded', checkAuth);
+  </script>
+</body>
+</html>

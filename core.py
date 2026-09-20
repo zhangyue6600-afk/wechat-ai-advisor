@@ -349,7 +349,8 @@ class WeChatAdvisorCore:
             "api_url": "https://api.deepseek.com/v1",
             "api_key": "",
             "model": "deepseek-chat",
-            "temperature": 0.7
+            "temperature": 0.7,
+            "mobile_pin": "668899"
         }
         self.config_path = os.path.join(self.data_dir, "config.json")
         self._load_config()

@@ -39,7 +39,10 @@
           <p class="text-xs text-slate-400">群聊知识库提炼 · 实时问答监控 · 幕后专家智囊</p>
         </div>
       </div>
-      <div class="flex items-center space-x-4">
+      <div class="flex items-center space-x-3">
+        <a href="/m" target="_blank" class="text-xs px-3 py-1.5 rounded-xl bg-indigo-600/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-600/30 transition flex items-center space-x-1.5 font-semibold">
+          <span>📱</span><span>手机控场端</span>
+        </a>
         <div id="wechat-badge" class="flex items-center space-x-2 px-3 py-1 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
           <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
           <span id="wechat-status-text">检测微信中...</span>
@@ -120,6 +123,31 @@
               <div>
                 <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Temperature (灵活性: 0.0 - 1.0)</label>
                 <input type="number" id="cfg-temp" step="0.1" min="0" max="1" value="0.7" class="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition text-slate-200">
+              </div>
+            </div>
+
+            <!-- 手机端安全口令与穿透直连指引卡片 -->
+            <div class="p-4 rounded-xl bg-slate-950/90 border border-slate-800 space-y-3">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                  <span class="text-base">📱</span>
+                  <label class="text-xs font-bold uppercase text-indigo-300">手机专属控场端安全口令 (PIN Code)</label>
+                </div>
+                <span class="text-[10px] text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800 font-medium">安全锁就绪</span>
+              </div>
+              <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+                <input type="text" id="cfg-mobile-pin" placeholder="例如: 668899" value="668899" class="w-40 bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-sm text-center font-mono tracking-wider focus:outline-none focus:border-indigo-500 text-slate-200">
+                <span class="text-[11px] text-slate-400">手机首次通过内网或穿透访问时需验证此口令，验证成功后自动记住设备。</span>
+              </div>
+              <div class="pt-2 border-t border-slate-800/80 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-400">
+                <div class="flex items-center space-x-1.5">
+                  <span class="text-indigo-400 font-bold">局域网秒开：</span>
+                  <code class="text-slate-200 bg-slate-900 px-2 py-0.5 rounded">http://192.168.5.56:5000/m</code>
+                </div>
+                <div class="flex items-center space-x-1.5">
+                  <span class="text-emerald-400 font-bold">Sakura Frp穿透：</span>
+                  <span>映射本地 <code class="text-slate-200 bg-slate-900 px-1 rounded">5000</code> 端口即可公网直连</span>
+                </div>
               </div>
             </div>
 

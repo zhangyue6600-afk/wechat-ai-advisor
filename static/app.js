@@ -117,6 +117,9 @@ async function loadConfig() {
     if (data.api_url) document.getElementById("cfg-url").value = data.api_url;
     if (data.model) document.getElementById("cfg-model").value = data.model;
     if (data.temperature) document.getElementById("cfg-temp").value = data.temperature;
+    if (data.mobile_pin && document.getElementById("cfg-mobile-pin")) {
+      document.getElementById("cfg-mobile-pin").value = data.mobile_pin;
+    }
     if (data.masked_key) {
       const tip = document.getElementById("cfg-masked-tip");
       tip.innerText = `当前已配置 Key: ${data.masked_key} (留空不修改)`;
@@ -171,6 +174,7 @@ async function saveLlmConfig(e) {
     api_key: document.getElementById("cfg-key").value.trim(),
     model: document.getElementById("cfg-model").value.trim(),
     temperature: parseFloat(document.getElementById("cfg-temp").value) || 0.7,
+    mobile_pin: document.getElementById("cfg-mobile-pin") ? document.getElementById("cfg-mobile-pin").value.trim() : "668899",
     test_now: true
   };
 
